@@ -42,3 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enforced safe DTD/entity handling in `@xmlens/core` `checkWellFormedness`: external DTDs are never fetched and custom `<!ENTITY>` declarations are never expanded, neutralizing recursive entity-expansion attacks.
 - Enforced repository binary/license guards against disallowed third-party binaries and unreviewed licenses (`npm run plugins:guard`, `npm run license:check`), including workspace `packages/*/package.json` (`peerDependencies` included) and `package-lock.json` package/reference scanning.
 - Pinned GitHub Actions workflows to 40-character commit SHAs, added a dedicated `npm audit --audit-level=high` CI job, and configured weekly Dependabot updates (`.github/dependabot.yml`).
+
+### Fixed
+
+- Tracked parser errors independently of `maxDiagnostics` truncation in `@xmlens/core` `checkWellFormedness` so `wellFormed` remains `false` even when earlier warnings fill the diagnostic cap before a syntax error occurs.

@@ -257,4 +257,52 @@ describe('checkWellFormedness', () => {
     expect(capped.diagnostics).toHaveLength(3);
     expect(capped.truncatedDiagnostics).toBe(true);
   });
+
+  it('reports wellFormed: false when maxDiagnostics is filled by a warning before a syntax error (Case A)', () => {
+    const xml =
+      '<!DOCTYPE doc SYSTEM "https://example.invalid/doc.dtd"><doc>&extEntity;<bad></doc>';
+    const result = checkWellFormedness(xml, { maxDiagnostics: 1 });
+
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      severity: 'warning',
+      code: 'XML_UNDECLARED_EXTERNAL_ENTITY',
+    });
+    expect(result.truncatedDiagnostics).toBe(true);
+    expect(result.wellFormed).toBe(false);
+
+    const paramEntityXml =
+      '<!DOCTYPE doc [<!ENTITY % pe SYSTEM "https://example.invalid/pe.ent"> %pe;]><doc>&peDefined;<unclosed></doc>';
+    const paramResult = checkWellFormedness(paramEntityXml, { maxDiagnostics: 1 });
+    expect(paramResult.diagnostics).toHaveLength(1);
+    expect(paramResult.diagnostics[0]?.code).toBe('XML_UNDECLARED_EXTERNAL_ENTITY');
+    expect(paramResult.truncatedDiagnostics).toBe(true);
+    expect(paramResult.wellFormed).toBe(false);
+  });
+
+  it('keeps wellFormed: true when maxDiagnostics truncates only warnings/info and no errors occur (Case B)', () => {
+    const xml =
+      '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE doc SYSTEM "https://example.invalid/doc.dtd"><doc>&extEntity;</doc>';
+    const result = checkWellFormedness(xml, { maxDiagnostics: 1 });
+
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]?.severity).toBe('warning');
+    expect(result.truncatedDiagnostics).toBe(true);
+    expect(result.wellFormed).toBe(true);
+  });
+
+  it('preserves both warnings and errors in diagnostics when maxDiagnostics is large enough (Case C)', () => {
+    const xml =
+      '<!DOCTYPE doc SYSTEM "https://example.invalid/doc.dtd"><doc>&extEntity;<bad></doc>';
+    const result = checkWellFormedness(xml, { maxDiagnostics: 100 });
+
+    expect(result.wellFormed).toBe(false);
+    expect(result.truncatedDiagnostics).toBe(false);
+    expect(
+      result.diagnostics.some(
+        (d) => d.severity === 'warning' && d.code === 'XML_UNDECLARED_EXTERNAL_ENTITY',
+      ),
+    ).toBe(true);
+    expect(result.diagnostics.some((d) => d.severity === 'error')).toBe(true);
+  });
 });

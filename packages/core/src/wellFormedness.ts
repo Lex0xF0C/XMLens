@@ -263,6 +263,7 @@ export function checkWellFormedness(
   const declaredGeneralEntities = new Set<string>();
 
   let truncatedDiagnostics = false;
+  let hasError = false;
   let rootElement: string | undefined;
   let elementCount = 0;
   let xmlDeclaration: XmlDeclarationInfo | undefined;
@@ -278,6 +279,9 @@ export function checkWellFormedness(
   });
 
   const pushDiagnostic = (diag: Diagnostic): void => {
+    if (diag.severity === 'error') {
+      hasError = true;
+    }
     const dedupKey = `${diag.code}|${diag.range?.offset ?? -1}|${String(diag.params?.detail ?? '')}`;
     if (seenKeys.has(dedupKey)) {
       return;
@@ -432,7 +436,7 @@ export function checkWellFormedness(
     }
   }
 
-  const wellFormed = diagnostics.every((diag) => diag.severity !== 'error');
+  const wellFormed = !hasError;
 
   return {
     wellFormed,
