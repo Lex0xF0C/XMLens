@@ -1,4 +1,11 @@
-import { formatMessage, type LocaleCode, type MessageCatalog } from '@xmlens/core';
+import {
+  formatMessage,
+  type Diagnostic,
+  type LocaleCode,
+  type MessageCatalog,
+  type WellFormednessResult,
+} from '@xmlens/core';
+import { createWellFormednessWorkerClient } from '@xmlens/workers';
 import enCatalog from '../../../locales/en.json';
 import jaCatalog from '../../../locales/ja.json';
 import './styles.css';
@@ -15,6 +22,7 @@ const APP_VERSION = '0.1.0';
 const STORAGE_LANG_KEY = 'xmlens.locale';
 const STORAGE_THEME_KEY = 'xmlens.theme';
 const MAX_PREVIEW_BYTES = 1024 * 1024;
+const INPUT_DEBOUNCE_MS = 300;
 
 function detectInitialLocale(): LocaleCode {
   const params = new URLSearchParams(window.location.search);
@@ -70,38 +78,13 @@ function createEl<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
-interface ValidationStatus {
-  kind: 'empty' | 'valid' | 'invalid' | 'too-large' | 'read-error';
-  count?: number;
-  root?: string;
-  detail?: string;
-  limitMb?: number;
-}
-
-function checkXmlWellFormedness(xmlInput: string): ValidationStatus {
-  const trimmed = xmlInput.trim();
-  if (!trimmed) {
-    return { kind: 'empty' };
-  }
-
-  if (new TextEncoder().encode(trimmed).byteLength > MAX_PREVIEW_BYTES) {
-    return { kind: 'too-large', limitMb: 1 };
-  }
-
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(trimmed, 'application/xml');
-  // M0 temporary check using main-thread DOMParser; M1 will replace this with a Web Worker parser.
-  // Known limitation: valid XML that legitimately contains a <parsererror> element can be misclassified as malformed.
-  const parserError = doc.querySelector('parsererror');
-  if (parserError) {
-    const detail = (parserError.textContent ?? '').replace(/\s+/g, ' ').trim();
-    return { kind: 'invalid', detail };
-  }
-
-  const rootName = doc.documentElement ? doc.documentElement.nodeName : '';
-  const elementCount = doc.getElementsByTagName('*').length;
-  return { kind: 'valid', count: elementCount, root: rootName };
-}
+type ValidationStatus =
+  | { readonly kind: 'empty' }
+  | { readonly kind: 'checked'; readonly result: WellFormednessResult }
+  | { readonly kind: 'too-large'; readonly limitMb: number }
+  | { readonly kind: 'read-error'; readonly detail: string }
+  | { readonly kind: 'worker-timeout' }
+  | { readonly kind: 'worker-error'; readonly detail: string };
 
 function mountApp(): void {
   const root = document.getElementById('app');
@@ -113,14 +96,78 @@ function mountApp(): void {
   let theme: ThemeMode = detectInitialTheme();
   let xmlDraft = '';
   let validationStatus: ValidationStatus = { kind: 'empty' };
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let checkEpoch = 0;
+
+  const workerClient = createWellFormednessWorkerClient(
+    () =>
+      new Worker(new URL('../../workers/src/xmlWorker.ts', import.meta.url), { type: 'module' }),
+  );
+  window.addEventListener('pagehide', () => {
+    workerClient.dispose();
+  });
 
   const t = (key: MessageKey, params?: Readonly<Record<string, string | number>>): string =>
     formatMessage(CATALOGS[locale], CATALOGS.en, key, params);
+
+  const severityLabel = (severity: Diagnostic['severity']): string => {
+    if (severity === 'error') {
+      return t('severity.error');
+    }
+    if (severity === 'warning') {
+      return t('severity.warning');
+    }
+    return t('severity.info');
+  };
 
   const applyDocumentAttributes = (): void => {
     document.documentElement.lang = locale;
     document.documentElement.dataset.theme = theme;
     document.title = `${t('app.name')} — ${t('app.tagline')}`;
+  };
+
+  let activeTextarea: HTMLTextAreaElement | null = null;
+  let updateViewsFn: (() => void) | null = null;
+  let setCheckingStateFn: (() => void) | null = null;
+
+  const clearDebounce = (): void => {
+    if (debounceTimer !== null) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+  };
+
+  const runWorkerCheck = async (xmlText: string): Promise<void> => {
+    const epoch = ++checkEpoch;
+    const trimmed = xmlText.trim();
+    if (!trimmed) {
+      workerClient.cancel();
+      validationStatus = { kind: 'empty' };
+      updateViewsFn?.();
+      return;
+    }
+
+    if (new TextEncoder().encode(xmlText).byteLength > MAX_PREVIEW_BYTES) {
+      workerClient.cancel();
+      validationStatus = { kind: 'too-large', limitMb: 1 };
+      updateViewsFn?.();
+      return;
+    }
+
+    setCheckingStateFn?.();
+    const outcome = await workerClient.check(xmlText);
+    if (epoch !== checkEpoch || outcome.status === 'cancelled') {
+      return;
+    }
+
+    if (outcome.status === 'ok') {
+      validationStatus = { kind: 'checked', result: outcome.result };
+    } else if (outcome.status === 'timeout') {
+      validationStatus = { kind: 'worker-timeout' };
+    } else {
+      validationStatus = { kind: 'worker-error', detail: outcome.message };
+    }
+    updateViewsFn?.();
   };
 
   const render = (): void => {
@@ -297,8 +344,17 @@ function mountApp(): void {
       },
     });
     textarea.value = xmlDraft;
+    activeTextarea = textarea;
+
     textarea.addEventListener('input', () => {
       xmlDraft = textarea.value;
+      clearDebounce();
+      workerClient.cancel();
+      const scheduledText = xmlDraft;
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        void runWorkerCheck(scheduledText);
+      }, INPUT_DEBOUNCE_MS);
     });
     editorPane.appendChild(textarea);
 
@@ -319,7 +375,8 @@ function mountApp(): void {
       className: 'diag-message',
       attrs: { role: 'status', 'aria-live': 'polite' },
     });
-    diagnosticsBody.appendChild(resultBox);
+    const diagListContainer = createEl('div', { className: 'diag-list-container' });
+    diagnosticsBody.append(resultBox, diagListContainer);
     diagnosticsPane.appendChild(diagnosticsBody);
 
     workspace.append(editorPane, diagnosticsPane);
@@ -358,10 +415,23 @@ function mountApp(): void {
       }),
     );
     const aboutBody = createEl('div', { className: 'about-body' });
+    const noticesParagraph = createEl('p', { text: t('about.noticesLabel') });
+    noticesParagraph.appendChild(
+      createEl('a', {
+        className: 'about-link',
+        text: t('about.noticesLink'),
+        attrs: {
+          href: './THIRD_PARTY_NOTICES.md',
+          target: '_blank',
+          rel: 'noopener noreferrer',
+        },
+      }),
+    );
     aboutBody.append(
       createEl('p', { text: t('about.version', { version: APP_VERSION }) }),
       createEl('p', { text: t('about.license') }),
       createEl('p', { text: t('about.privacy') }),
+      noticesParagraph,
     );
     const aboutFooter = createEl('div', { className: 'about-footer' });
     const aboutCloseBtn = createEl('button', {
@@ -373,8 +443,96 @@ function mountApp(): void {
     aboutDialog.append(aboutHeader, aboutBody, aboutFooter);
     workbench.appendChild(aboutDialog);
 
+    const renderDiagnosticsList = (result: WellFormednessResult): void => {
+      diagListContainer.replaceChildren();
+      if (result.diagnostics.length === 0) {
+        return;
+      }
+
+      const list = createEl('ul', {
+        className: 'diag-list',
+        attrs: { 'aria-label': t('diagnostics.listLabel') },
+      });
+
+      for (const diag of result.diagnostics) {
+        const item = createEl('li', { className: `diag-item is-${diag.severity}` });
+        const jumpBtn = createEl('button', {
+          className: 'diag-item-btn',
+          attrs: { type: 'button' },
+        });
+
+        jumpBtn.appendChild(
+          createEl('span', {
+            className: `diag-severity is-${diag.severity}`,
+            text: severityLabel(diag.severity),
+          }),
+        );
+
+        if (diag.range) {
+          jumpBtn.appendChild(
+            createEl('span', {
+              className: 'diag-loc',
+              text: t('diagnostics.location', {
+                line: diag.range.line,
+                column: diag.range.column,
+              }),
+            }),
+          );
+        }
+
+        const localizedMsg = formatMessage(
+          CATALOGS[locale],
+          CATALOGS.en,
+          diag.messageKey,
+          diag.params,
+        );
+        jumpBtn.appendChild(createEl('span', { className: 'diag-text', text: localizedMsg }));
+
+        jumpBtn.addEventListener('click', () => {
+          const target = activeTextarea;
+          if (!target) {
+            return;
+          }
+          const rawOffset = diag.range?.offset ?? 0;
+          const clampedOffset = Math.min(Math.max(0, rawOffset), target.value.length);
+          target.focus();
+          target.setSelectionRange(clampedOffset, clampedOffset);
+        });
+
+        item.appendChild(jumpBtn);
+
+        const rawDetail = diag.params?.detail;
+        if (typeof rawDetail === 'string' && rawDetail.length > 0) {
+          const details = createEl('details', { className: 'diag-raw-details' });
+          details.append(
+            createEl('summary', {
+              className: 'diag-raw-summary',
+              text: t('diagnostics.rawDetail'),
+            }),
+            createEl('code', { className: 'diag-raw-code', text: rawDetail }),
+          );
+          item.appendChild(details);
+        }
+
+        list.appendChild(item);
+      }
+
+      diagListContainer.appendChild(list);
+
+      if (result.truncatedDiagnostics) {
+        diagListContainer.appendChild(
+          createEl('p', {
+            className: 'diag-truncated',
+            text: t('diagnostics.truncated', { shown: result.diagnostics.length }),
+          }),
+        );
+      }
+    };
+
     const updateStatusViews = (): void => {
-      resultBox.classList.remove('is-valid', 'is-invalid');
+      resultBox.classList.remove('is-valid', 'is-invalid', 'has-warnings');
+      diagListContainer.replaceChildren();
+
       if (validationStatus.kind === 'empty') {
         resultBox.textContent = t('preview.empty');
         statusStateField.textContent = t('statusBar.ready');
@@ -382,34 +540,67 @@ function mountApp(): void {
       } else if (validationStatus.kind === 'too-large') {
         resultBox.classList.add('is-invalid');
         resultBox.textContent = t('preview.tooLarge', {
-          limitMb: validationStatus.limitMb ?? 1,
+          limitMb: validationStatus.limitMb,
         });
         statusStateField.textContent = t('statusBar.tooLarge');
         statusCountField.textContent = t('statusBar.elements', { count: 0 });
       } else if (validationStatus.kind === 'read-error') {
         resultBox.classList.add('is-invalid');
         resultBox.textContent = t('preview.readError', {
-          detail: validationStatus.detail ?? '',
+          detail: validationStatus.detail,
         });
         statusStateField.textContent = t('statusBar.notWellFormed');
         statusCountField.textContent = t('statusBar.elements', { count: 0 });
-      } else if (validationStatus.kind === 'valid') {
-        resultBox.classList.add('is-valid');
-        const count = validationStatus.count ?? 0;
-        resultBox.textContent = t('preview.valid', {
-          count,
-          root: validationStatus.root ?? '',
-        });
-        statusStateField.textContent = t('statusBar.wellFormed');
-        statusCountField.textContent = t('statusBar.elements', { count });
-      } else {
+      } else if (validationStatus.kind === 'worker-timeout') {
         resultBox.classList.add('is-invalid');
-        resultBox.textContent = t('preview.invalid', {
-          detail: validationStatus.detail ?? '',
+        resultBox.textContent = t('preview.workerTimeout');
+        statusStateField.textContent = t('statusBar.notWellFormed');
+        statusCountField.textContent = t('statusBar.elements', { count: 0 });
+      } else if (validationStatus.kind === 'worker-error') {
+        resultBox.classList.add('is-invalid');
+        resultBox.textContent = t('preview.workerError', {
+          detail: validationStatus.detail,
         });
         statusStateField.textContent = t('statusBar.notWellFormed');
         statusCountField.textContent = t('statusBar.elements', { count: 0 });
+      } else {
+        const { result } = validationStatus;
+        const errorCount = result.diagnostics.filter((d) => d.severity === 'error').length;
+        const warningCount = result.diagnostics.filter((d) => d.severity === 'warning').length;
+
+        if (result.wellFormed) {
+          resultBox.classList.add('is-valid');
+          if (warningCount > 0) {
+            resultBox.classList.add('has-warnings');
+            resultBox.textContent = t('preview.validWithWarnings', {
+              count: result.elementCount,
+              root: result.rootElement ?? '',
+              warnings: warningCount,
+            });
+            statusStateField.textContent = t('statusBar.warnings', { count: warningCount });
+          } else {
+            resultBox.textContent = t('preview.valid', {
+              count: result.elementCount,
+              root: result.rootElement ?? '',
+            });
+            statusStateField.textContent = t('statusBar.wellFormed');
+          }
+        } else {
+          resultBox.classList.add('is-invalid');
+          resultBox.textContent = t('preview.invalidCount', {
+            errors: errorCount,
+            warnings: warningCount,
+          });
+          statusStateField.textContent = t('statusBar.notWellFormed');
+        }
+        statusCountField.textContent = t('statusBar.elements', { count: result.elementCount });
+        renderDiagnosticsList(result);
       }
+    };
+
+    updateViewsFn = updateStatusViews;
+    setCheckingStateFn = () => {
+      statusStateField.textContent = t('statusBar.checking');
     };
     updateStatusViews();
 
@@ -418,32 +609,44 @@ function mountApp(): void {
       if (!file) {
         return;
       }
+      clearDebounce();
       if (file.size > MAX_PREVIEW_BYTES) {
+        ++checkEpoch;
+        workerClient.cancel();
         validationStatus = { kind: 'too-large', limitMb: 1 };
         updateStatusViews();
         return;
       }
+      const fileEpoch = ++checkEpoch;
       try {
-        xmlDraft = await file.text();
+        const text = await file.text();
+        if (fileEpoch !== checkEpoch) {
+          return;
+        }
+        xmlDraft = text;
         textarea.value = xmlDraft;
-        validationStatus = checkXmlWellFormedness(xmlDraft);
+        await runWorkerCheck(xmlDraft);
       } catch (err: unknown) {
+        if (fileEpoch !== checkEpoch) {
+          return;
+        }
         const detail = err instanceof Error ? err.message : String(err);
         validationStatus = { kind: 'read-error', detail };
+        updateStatusViews();
       }
-      updateStatusViews();
     });
 
     sampleBtn.addEventListener('click', () => {
+      clearDebounce();
       xmlDraft = t('preview.sampleXml');
       textarea.value = xmlDraft;
-      validationStatus = checkXmlWellFormedness(xmlDraft);
-      updateStatusViews();
+      void runWorkerCheck(xmlDraft);
     });
 
     checkBtn.addEventListener('click', () => {
-      validationStatus = checkXmlWellFormedness(textarea.value);
-      updateStatusViews();
+      clearDebounce();
+      xmlDraft = textarea.value;
+      void runWorkerCheck(xmlDraft);
     });
 
     aboutBtn.addEventListener('click', () => {

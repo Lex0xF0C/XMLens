@@ -26,7 +26,8 @@ export interface WellFormednessResult {
 
 const DEFAULT_MAX_DIAGNOSTICS = 100;
 const DEFAULT_ASSUMED_ENCODING = 'UTF-8';
-const ENTITY_NAME_RE = /<!ENTITY\s+(?:%\s+)?([^\s<>'"&%;]+)/g;
+const GENERAL_ENTITY_DECL_RE = /<!ENTITY\s+(?!%)([^\s<>'"&%;]+)/g;
+const PARAMETER_ENTITY_REF_RE = /%[^\s%;<>'"&]+;/;
 const ENTITY_TAIL_RE = /&([^\s&;]+);$/;
 
 function stripLeadingPosition(rawMessage: string, line: number, column: number): string {
@@ -56,16 +57,33 @@ function normalizeEncodingName(encoding: string): string {
 }
 
 interface MappedParserError {
+  readonly severity?: Diagnostic['severity'];
   readonly code: string;
   readonly messageKey: string;
   readonly params: Readonly<Record<string, string | number>>;
 }
 
+interface EntityContext {
+  readonly declaredGeneralEntities: ReadonlySet<string>;
+  readonly mayBeDeclaredExternally: boolean;
+}
+
+/**
+ * Maps `saxes` error strings to structured diagnostic payloads.
+ *
+ * W3C XML 1.0 (Fifth Edition) §4.1 — Well-formedness constraint: Entity Declared:
+ * When a document has no external DTD subset and no parameter-entity references,
+ * or specifies `standalone="yes"`, an undeclared general entity reference is a
+ * well-formedness error (`severity: 'error'`). When an external subset (`SYSTEM`/`PUBLIC`)
+ * or parameter-entity reference (`%pe;`) is present and `standalone` is not `"yes"`,
+ * non-validating processors must not treat unexpanded external entity references as
+ * not-well-formed; XMLens emits a `warning` diagnostic instead without fetching external DTDs.
+ */
 function mapSaxesErrorMessage(
   detail: string,
   xml: string,
   offset: number,
-  declaredDtdEntities: ReadonlySet<string>,
+  entityContext: EntityContext,
 ): MappedParserError | null {
   if (detail === 'document must contain a root element.' || detail === 'unexpected end.') {
     return {
@@ -79,9 +97,17 @@ function mapSaxesErrorMessage(
     const tail = xml.slice(Math.max(0, offset - 256), offset);
     const match = ENTITY_TAIL_RE.exec(tail);
     const entity = match?.[1];
-    if (entity !== undefined && declaredDtdEntities.has(entity)) {
-      // Declared DTD entities are intentionally not expanded; XML_DTD_ENTITY_EXPANSION_DISABLED covers them.
+    if (entity !== undefined && entityContext.declaredGeneralEntities.has(entity)) {
+      // Declared internal DTD entities are intentionally not expanded; XML_DTD_ENTITY_EXPANSION_DISABLED covers them.
       return null;
+    }
+    if (entity !== undefined && entityContext.mayBeDeclaredExternally) {
+      return {
+        severity: 'warning',
+        code: 'XML_UNDECLARED_EXTERNAL_ENTITY',
+        messageKey: 'diagnostics.xml.undeclaredExternalEntity',
+        params: { entity, detail },
+      };
     }
     if (entity !== undefined) {
       return {
@@ -234,13 +260,14 @@ export function checkWellFormedness(
   const parser = new SaxesParser({ xmlns: true, position: true });
   const diagnostics: Diagnostic[] = [];
   const seenKeys = new Set<string>();
-  const declaredDtdEntities = new Set<string>();
+  const declaredGeneralEntities = new Set<string>();
 
   let truncatedDiagnostics = false;
   let rootElement: string | undefined;
   let elementCount = 0;
   let xmlDeclaration: XmlDeclarationInfo | undefined;
   let hasExternalDtd = false;
+  let hasParameterEntityRef = false;
   let doctypeRange: SourceRange | undefined;
   let declRange: SourceRange | undefined;
 
@@ -289,14 +316,18 @@ export function checkWellFormedness(
 
     if (bracketIndex >= 0) {
       const internalSubset = doctypeContent.slice(bracketIndex + 1);
-      ENTITY_NAME_RE.lastIndex = 0;
-      let match = ENTITY_NAME_RE.exec(internalSubset);
+      if (PARAMETER_ENTITY_REF_RE.test(internalSubset)) {
+        hasParameterEntityRef = true;
+      }
+
+      GENERAL_ENTITY_DECL_RE.lastIndex = 0;
+      let match = GENERAL_ENTITY_DECL_RE.exec(internalSubset);
       while (match !== null) {
         const entityName = match[1];
         if (entityName) {
-          declaredDtdEntities.add(entityName);
+          declaredGeneralEntities.add(entityName);
         }
-        match = ENTITY_NAME_RE.exec(internalSubset);
+        match = GENERAL_ENTITY_DECL_RE.exec(internalSubset);
       }
     }
   });
@@ -315,12 +346,17 @@ export function checkWellFormedness(
     ) {
       return;
     }
-    const mapped = mapSaxesErrorMessage(detail, xml, range.offset, declaredDtdEntities);
+    const mayBeDeclaredExternally =
+      (hasExternalDtd || hasParameterEntityRef) && xmlDeclaration?.standalone !== 'yes';
+    const mapped = mapSaxesErrorMessage(detail, xml, range.offset, {
+      declaredGeneralEntities,
+      mayBeDeclaredExternally,
+    });
     if (!mapped) {
       return;
     }
     pushDiagnostic({
-      severity: 'error',
+      severity: mapped.severity ?? 'error',
       code: mapped.code,
       messageKey: mapped.messageKey,
       params: mapped.params,
@@ -343,14 +379,14 @@ export function checkWellFormedness(
     });
   }
 
-  if (declaredDtdEntities.size > 0) {
+  if (declaredGeneralEntities.size > 0) {
     const dtdDiag: Diagnostic = {
       severity: 'warning',
       code: 'XML_DTD_ENTITY_EXPANSION_DISABLED',
       messageKey: 'diagnostics.xml.dtdEntityExpansionDisabled',
       params: {
-        count: declaredDtdEntities.size,
-        detail: `Declared ${declaredDtdEntities.size} DTD entities; expansion disabled for security.`,
+        count: declaredGeneralEntities.size,
+        detail: `Declared ${declaredGeneralEntities.size} DTD entities; expansion disabled for security.`,
       },
       source: 'parser',
       ...(doctypeRange ? { range: doctypeRange } : {}),

@@ -1,6 +1,6 @@
 # ADR-0003: XML Parser Selection for Worker Well-Formedness Diagnostics (M1a)
 
-- **Status:** Accepted (implemented in `@xmlens/core` M1a-1; worker wiring pending M1a-2)
+- **Status:** Accepted (implemented in `@xmlens/core` M1a-1 and wired via `@xmlens/workers` in `packages/app` M1a-2)
 - **Date:** 2026-11-24
 
 ## Context
@@ -69,9 +69,10 @@ Observed directly by installing `saxes@6.0.0` in `@xmlens/core`, inspecting `nod
 1. **Measured bundle contribution:** `saxes@6.0.0` + `xmlchars@2.2.0` bundled together as minified ESM total **`28,788` bytes raw / `8,176` bytes gzipped (level 9)** (~0.5% of the `1.5 MB` first-load budget).
 2. **Error continuation & cascading diagnostics:** When an `error` listener is registered on `SaxesParser`, `fail()` invokes the handler without throwing and continues scanning. A single syntax fault (such as `<root><a></b></root>` or whitespace-only input) can emit cascading or repeated `error` events (e.g., two `"unexpected close tag."` events at the same offset before `"unmatched closing tag: b."`, or `"document must contain a root element."` followed by `"unexpected end."`). `checkWellFormedness()` deduplicates identical `(code, offset, detail)` entries and caps diagnostics at `maxDiagnostics` (default `100`).
 3. **Internal DTD `<!ENTITY>` & billion-laughs safety:** `saxes` parses `<!DOCTYPE ...>` into the `doctype` event in `< 1 ms` without expanding internal `<!ENTITY>` declarations and without fetching `SYSTEM`/`PUBLIC` external DTDs. When `&name;` later appears in text or attributes, `saxes` emits `"undefined entity."` with `parser.position` immediately after `;`. In `checkWellFormedness()`:
-   - Declared internal entity names are extracted from `<!DOCTYPE ... [...]>` without expanding them; a `warning` diagnostic (`XML_DTD_ENTITY_EXPANSION_DISABLED`) is emitted once, and references to those declared entity names are suppressed so billion-laughs or valid internal-DTD documents do not emit misleading `"undefined entity"` well-formedness errors.
-   - Undeclared entity references (`&missing;` with no matching `<!ENTITY>`) still emit an `error` diagnostic (`XML_UNDEFINED_ENTITY`).
-   - External DTD references (`SYSTEM`/`PUBLIC`) emit a `warning` diagnostic (`XML_EXTERNAL_DTD_IGNORED`) confirming no network fetch occurred.
+   - Declared internal general entity names (`<!ENTITY name ...>`) are extracted from `<!DOCTYPE ... [...]>` without expanding them; a `warning` diagnostic (`XML_DTD_ENTITY_EXPANSION_DISABLED`) is emitted once, and references to those declared entity names are suppressed so billion-laughs or valid internal-DTD documents do not emit misleading `"undefined entity"` well-formedness errors.
+   - Undeclared entity references (`&missing;`) follow **W3C XML 1.0 (Fifth Edition) §4.1 (`Well-formedness constraint: Entity Declared`)**:
+     - When there is no external DTD subset and no parameter-entity reference, or when `standalone="yes"` is declared, `&missing;` emits an `error` diagnostic (`XML_UNDEFINED_ENTITY`), marking `wellFormed: false`.
+     - When `DOCTYPE` declares an external DTD (`SYSTEM`/`PUBLIC`) or parameter-entity reference (`%pe;`) and `standalone` is not `"yes"`, undeclared entity references emit a `warning` diagnostic (`XML_UNDECLARED_EXTERNAL_ENTITY`) rather than an error (`wellFormed` remains `true`), and external DTDs still emit `XML_EXTERNAL_DTD_IGNORED` (`warning`) with zero network requests.
 4. **Coordinates (`line`, `column`, `offset`):**
    - `parser.line` is 1-based; `parser.column` is **0-based Unicode code-point count** (`𠮷` U+20BB7 counts as 1); `parser.columnIndex` is **0-based UTF-16 code-unit index within the line**; `parser.position` is **0-based UTF-16 code-unit offset in the input string**.
    - Empirical observation on `<a/>hello` (length `9`): `parser.position` at EOF text-outside-root was `10` (`chunk.length + 1`). `checkWellFormedness()` clamps `offset = clamp(parser.position, 0, xml.length)` and normalizes `SourceRange` to `{ line: parser.line, column: parser.column + 1, offset }`. `offset` (UTF-16 code-unit index) is authoritative for JavaScript string slicing and editor selection.

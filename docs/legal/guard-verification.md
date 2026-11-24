@@ -6,8 +6,8 @@ Therefore, the Milestone M0 acceptance test ("confirm that the repository guard 
 
 ## How the Guard Scans Files
 
-- When `GITHUB_ACTIONS` is **unset** (local runs such as `npm run plugins:guard`), `scripts/check-no-third-party-binaries.mjs` scans local workspace files on disk (excluding `.git/`, `node_modules/`, and `dist/`) as well as `package.json`.
-- When `GITHUB_ACTIONS=true` (GitHub Actions CI), the guard runs `git ls-files` so it checks **all tracked files in git**, including catching any accidentally tracked files inside `node_modules/` or `dist/`.
+- When `GITHUB_ACTIONS` is **unset** (local runs such as `npm run plugins:guard`), `scripts/check-no-third-party-binaries.mjs` scans local workspace files on disk (excluding `.git/`, `node_modules/`, and `dist/`), root `package.json`, all workspace manifests (`packages/*/package.json`), and `package-lock.json` (package entries and dependency references).
+- When `GITHUB_ACTIONS=true` (GitHub Actions CI), the guard runs `git ls-files` so it checks **all tracked files in git**, including catching any accidentally tracked files inside `node_modules/` or `dist/`, in addition to `package.json`, `packages/*/package.json`, and `package-lock.json`.
 
 ## Manual Verification Steps
 

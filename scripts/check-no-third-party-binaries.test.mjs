@@ -7,7 +7,18 @@ describe('findViolations', () => {
       files: ['package.json', 'packages/core/src/index.ts', 'locales/en.json'],
       packageJson: {
         dependencies: {},
-        devDependencies: { vite: '^8.3.8' },
+        devDependencies: { vite: '^7.3.8' },
+      },
+      workspacePackageJsons: {
+        'packages/core/package.json': {
+          dependencies: { saxes: '6.0.0' },
+        },
+      },
+      packageLockJson: {
+        packages: {
+          '': { name: 'xmlens', dependencies: {} },
+          'node_modules/saxes': { version: '6.0.0' },
+        },
       },
       fileContents: {
         'packages/core/src/index.ts': 'export const ok = true;',
@@ -45,15 +56,57 @@ describe('findViolations', () => {
     expect(violations).toEqual(['Disallowed xslt3-related file path: scripts/xslt3-runner.js']);
   });
 
-  it('flags saxon-js and xslt3 in package.json dependencies', () => {
+  it('flags saxon-js and xslt3 across all dependency sections of root and workspace package.json', () => {
     const violations = findViolations({
-      files: ['package.json'],
+      files: ['package.json', 'packages/core/package.json', 'packages/app/package.json'],
       packageJson: {
         dependencies: { 'saxon-js': '2.6.0' },
-        optionalDependencies: { xslt3: '2.6.0' },
+        peerDependencies: { xslt3: '2.6.0' },
+      },
+      workspacePackageJsons: {
+        'packages/core/package.json': {
+          devDependencies: { 'saxon-js': '2.6.0' },
+        },
+        'packages/app/package.json': {
+          optionalDependencies: { xslt3: '2.6.0' },
+          peerDependencies: { 'saxon-js': '2.6.0' },
+        },
       },
     });
-    expect(violations).toHaveLength(2);
+    expect(violations).toHaveLength(5);
+    expect(violations.some((v) => v.includes('packages/core/package.json (devDependencies)'))).toBe(
+      true,
+    );
+    expect(violations.some((v) => v.includes('packages/app/package.json (peerDependencies)'))).toBe(
+      true,
+    );
+  });
+
+  it('flags top-level, nested, and dependency-referenced saxon-js/xslt3 entries in package-lock.json', () => {
+    const violations = findViolations({
+      files: ['package-lock.json'],
+      packageLockJson: {
+        packages: {
+          '': {
+            dependencies: { 'saxon-js': '^2.6.0' },
+          },
+          'node_modules/saxon-js': {
+            version: '2.6.0',
+          },
+          'node_modules/some-wrapper/node_modules/xslt3': {
+            version: '2.6.0',
+          },
+          'node_modules/other': {
+            peerDependencies: { xslt3: '^2.6.0' },
+          },
+        },
+      },
+    });
+    expect(violations).toHaveLength(4);
+    expect(violations.some((v) => v.includes('node_modules/saxon-js'))).toBe(true);
+    expect(violations.some((v) => v.includes('node_modules/some-wrapper/node_modules/xslt3'))).toBe(
+      true,
+    );
   });
 
   it('flags tracked node_modules/ and dist/ paths', () => {

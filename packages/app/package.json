@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@xmlens/core": "*"
+    "@xmlens/core": "*",
+    "@xmlens/workers": "*"
   }
 }

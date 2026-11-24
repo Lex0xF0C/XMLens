@@ -13,6 +13,8 @@
   --selection-bg: #bfdbfe;
   --error-text: #991b1b;
   --error-border: #b91c1c;
+  --warning-text: #854d0e;
+  --warning-border: #a16207;
   --ok-text: #14532d;
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans JP', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -33,6 +35,8 @@
   --selection-bg: #1d4ed8;
   --error-text: #fca5a5;
   --error-border: #f87171;
+  --warning-text: #fde047;
+  --warning-border: #ca8a04;
   --ok-text: #86efac;
 }
 
@@ -51,6 +55,8 @@
   --selection-bg: #1e40af;
   --error-text: #ff8080;
   --error-border: #ff8080;
+  --warning-text: #fde047;
+  --warning-border: #fde047;
   --ok-text: #80ff80;
 }
 
@@ -268,9 +274,109 @@ textarea {
   border-color: var(--border-color);
 }
 
+.diag-message.is-valid.has-warnings {
+  border-color: var(--warning-border);
+}
+
 .diag-message.is-invalid {
   color: var(--error-text);
   border-color: var(--error-border);
+}
+
+.diag-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.diag-item {
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  background: var(--bg-surface);
+}
+
+.diag-item.is-error {
+  border-left: 3px solid var(--error-border);
+}
+
+.diag-item.is-warning {
+  border-left: 3px solid var(--warning-border);
+}
+
+.diag-item.is-info {
+  border-left: 3px solid var(--border-color);
+}
+
+.diag-item-btn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.diag-item-btn:hover {
+  background: var(--bg-control-hover);
+}
+
+.diag-severity {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.diag-severity.is-error {
+  color: var(--error-text);
+}
+
+.diag-severity.is-warning {
+  color: var(--warning-text);
+}
+
+.diag-severity.is-info {
+  color: var(--text-secondary);
+}
+
+.diag-loc {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.diag-text {
+  flex: 1 1 200px;
+}
+
+.diag-raw-details {
+  border-top: 1px solid var(--border-subtle);
+  padding: 4px 8px;
+  background: var(--bg-pane-header);
+}
+
+.diag-raw-summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.diag-raw-code {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  word-break: break-word;
+}
+
+.diag-truncated {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .status-bar {
@@ -332,6 +438,11 @@ textarea {
 
 .about-body p {
   margin: 0;
+}
+
+.about-link {
+  color: var(--focus-ring);
+  text-decoration: underline;
 }
 
 .about-footer {

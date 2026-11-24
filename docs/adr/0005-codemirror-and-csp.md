@@ -1,6 +1,6 @@
 # ADR-0005: CodeMirror 6 Integration Under Strict CSP (M1b Preparation)
 
-- **Status:** Proposed (awaiting maintainer approval before installing CodeMirror packages)
+- **Status:** Accepted in principle; spike gated on ADR-0006 (test harness decision)
 - **Date:** 2026-11-24
 
 ## Context
@@ -74,8 +74,10 @@ Create a host `<div class="editor-host">` with `attachShadow({ mode: 'open' })`,
 - **Caveats / Items Unverified Until Cross-Browser Playwright Spike:**
   1. Browser CSP enforcement for Constructable Stylesheets (`new CSSStyleSheet()` + `insertRule` + `shadowRoot.adoptedStyleSheets`) under `style-src 'self'` in **Chromium, Firefox, and WebKit** is **unverified** in our actual test harness (`securitypolicyviolation` listener check required in Playwright).
   2. Whether CodeMirror panels/tooltips (`@codemirror/lint`, `@codemirror/search`, `@codemirror/autocomplete`) inject `<style>` or `style="..."` or portal to `document.body` (unless `tooltips({ parent })` targets the `ShadowRoot`) is **unverified**.
-  3. CJK IME composition, keyboard navigation, and screen-reader `aria-labelledby` association across a `ShadowRoot` boundary are **unverified** until tested with Playwright + axe.
-  4. Actual Vite gzipped JS delta for the 7 CodeMirror packages is **unverified**.
+  3. **Accessible name across shadow boundary:** `aria-labelledby` / IDREF cannot cross a `ShadowRoot` boundary, so the editor's accessible name must be set inside the shadow root (for example via `EditorView.contentAttributes.of({ 'aria-label': ... })` from i18n).
+  4. **Inline style vs CSSOM CSP check:** CSP blocks `style="..."` attributes created via `setAttribute('style', ...)` or parsed HTML, while allowing CSSOM property writes (`el.style.x = ...`); static source inspection is insufficient, so the spike must rely on measured `securitypolicyviolation` events in live browsers.
+  5. CJK IME composition, keyboard navigation, and screen-reader behavior inside `ShadowRoot` are **unverified** until tested with Playwright + axe.
+  6. Actual Vite gzipped JS delta for the 7 CodeMirror packages is **unverified**.
 
 ### Option B: Build-Time `<style>` Hash Allowlist (`'sha256-...'`) or Static CSS Extraction
 
@@ -90,11 +92,11 @@ Allow inline `<style>` in Light DOM while keeping `script-src 'self'` untouched.
 - **Pros:** Simplest fallback; avoids ShadowRoot tooltip/ARIA edge cases.
 - **Cons:** Weakens CSP `style-src 'self'` against style-based injection/UI-redressing if untrusted markup ever reached the main DOM, and conflicts with `AGENTS.md` §4.2.2 unless Option A proves unworkable in Firefox or WebKit.
 
-## Recommendation (Pending Maintainer Approval)
+## Recommendation (Accepted in Principle; Spike Gated on ADR-0006)
 
-Approve **Option A** as a **gated M1b spike**:
+Option **A** is accepted in principle as a **gated M1b spike** (pending maintainer approval of `ADR-0006` before installing any CodeMirror or test-harness packages):
 
-1. Install the 7 MIT-licensed CodeMirror packages listed above (after maintainer approval).
+1. Install the 7 MIT-licensed CodeMirror packages listed above (only after the test harness is approved and spike begins).
 2. Measure the exact Vite production gzipped JS delta against the `1.5 MB` budget.
-3. Verify in Playwright across **Chromium, Firefox, and WebKit** with `style-src 'self'` active that mounting `EditorView` (with `@codemirror/lang-xml`, `@codemirror/lint`, and `@codemirror/search` configured inside the `ShadowRoot`) emits **zero `securitypolicyviolation` events**, passes axe accessibility checks, and handles CJK/IME input properly.
-4. Only if a target browser blocks `adoptedStyleSheets` or breaks accessibility/IME inside `ShadowRoot`, escalate before considering Option C.
+3. Verify in Playwright across **Chromium, Firefox, and WebKit** with `style-src 'self'` active that mounting `EditorView` (with `@codemirror/lang-xml`, `@codemirror/lint`, `@codemirror/search`, and an internal `aria-label` inside the `ShadowRoot`) emits **zero measured `securitypolicyviolation` events**, passes axe accessibility checks, and handles CJK/IME input properly.
+4. **Escalation rule:** If any target browser fails Option A (CSP violation, broken accessibility, or broken IME), **stop and return the fallback decision to the maintainer** — do not automatically adopt Option C.

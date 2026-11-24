@@ -7,6 +7,7 @@ All XML fixtures in this directory are self-authored specifically for XMLens aut
 | `valid-akn-cjk.xml`             | Well-formed Akoma Ntoso-style bilingual EN/JA XML with namespaces and CJK text                                                | Self-authored (MIT) |
 | `valid-utf8-bom.xml`            | Well-formed XML beginning with a UTF-8 Byte Order Mark (`U+FEFF`)                                                             | Self-authored (MIT) |
 | `dtd-internal-entity.xml`       | Well-formed XML with an internal `<!DOCTYPE>` entity declaration (`&title;`) to verify entity expansion remains disabled      | Self-authored (MIT) |
+| `dtd-external-entity.xml`       | Well-formed XML referencing an entity declared in an external DTD subset (`SYSTEM`) per XML 1.0 §4.1                          | Self-authored (MIT) |
 | `security-billion-laughs.xml`   | Nested internal entity-expansion attack pattern to verify bounded, non-expanding behavior                                     | Self-authored (MIT) |
 | `encoding-iso8859-1.xml`        | Well-formed XML declaring `encoding="ISO-8859-1"` to verify encoding note diagnostics                                         | Self-authored (MIT) |
 | `invalid-duplicate-attr.xml`    | Malformed XML with duplicate attributes on an element                                                                         | Self-authored (MIT) |

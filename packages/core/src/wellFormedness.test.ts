@@ -174,6 +174,52 @@ describe('checkWellFormedness', () => {
     });
   });
 
+  it('emits warning (not error) for undeclared entities with external DTD or parameter entities unless standalone="yes"', () => {
+    const systemDtd =
+      '<!DOCTYPE doc SYSTEM "https://example.invalid/doc.dtd"><doc>&extEntity;</doc>';
+    const systemResult = checkWellFormedness(systemDtd);
+    expect(systemResult.wellFormed).toBe(true);
+    expect(systemResult.diagnostics.map((d) => d.code)).toEqual([
+      'XML_UNDECLARED_EXTERNAL_ENTITY',
+      'XML_EXTERNAL_DTD_IGNORED',
+    ]);
+    expect(systemResult.diagnostics[0]).toMatchObject({
+      severity: 'warning',
+      messageKey: 'diagnostics.xml.undeclaredExternalEntity',
+      params: { entity: 'extEntity' },
+    });
+
+    const publicDtd =
+      '<?xml version="1.0" standalone="no"?><!DOCTYPE doc PUBLIC "-//XMLens//DTD Test//EN" "https://example.invalid/doc.dtd"><doc>&pubEntity;</doc>';
+    const publicResult = checkWellFormedness(publicDtd);
+    expect(publicResult.wellFormed).toBe(true);
+    expect(publicResult.diagnostics.map((d) => d.code)).toEqual([
+      'XML_UNDECLARED_EXTERNAL_ENTITY',
+      'XML_EXTERNAL_DTD_IGNORED',
+    ]);
+
+    const paramEntity =
+      '<!DOCTYPE doc [<!ENTITY % pe SYSTEM "https://example.invalid/pe.ent"> %pe;]><doc>&peDefined;</doc>';
+    const paramResult = checkWellFormedness(paramEntity);
+    expect(paramResult.wellFormed).toBe(true);
+    expect(paramResult.diagnostics).toHaveLength(1);
+    expect(paramResult.diagnostics[0]).toMatchObject({
+      severity: 'warning',
+      code: 'XML_UNDECLARED_EXTERNAL_ENTITY',
+      params: { entity: 'peDefined' },
+    });
+
+    const standaloneYes =
+      '<?xml version="1.0" standalone="yes"?><!DOCTYPE doc SYSTEM "https://example.invalid/doc.dtd"><doc>&extEntity;</doc>';
+    const standaloneResult = checkWellFormedness(standaloneYes);
+    expect(standaloneResult.wellFormed).toBe(false);
+    expect(standaloneResult.diagnostics[0]).toMatchObject({
+      severity: 'error',
+      code: 'XML_UNDEFINED_ENTITY',
+      params: { entity: 'extEntity' },
+    });
+  });
+
   it('emits an informational diagnostic when XML declaration specifies non-UTF encoding', () => {
     const xml = '<?xml version="1.0" encoding="ISO-8859-1"?><doc/>';
     const result = checkWellFormedness(xml);

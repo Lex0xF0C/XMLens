@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -15,6 +15,14 @@ const VENDOR_COPYRIGHT_REGEX = new RegExp(
 );
 const VENDOR_LICENSE_REGEX = new RegExp(['saxo', 'nica', '\\s+public\\s+license'].join(''), 'i');
 
+const DISALLOWED_DEP_NAMES = new Set(['saxon-js', 'xslt3']);
+const DEPENDENCY_SECTIONS = [
+  'dependencies',
+  'devDependencies',
+  'optionalDependencies',
+  'peerDependencies',
+];
+const DISALLOWED_LOCK_PATH_REGEX = /(?:^|\/)node_modules\/(saxon-js|xslt3)(?:$|\/)/;
 const IGNORED_LOCAL_DIRS = new Set(['.git', 'node_modules', 'dist']);
 
 function isDocsPath(filePath) {
@@ -32,16 +40,107 @@ function isDisallowedTrackedDir(filePath) {
   );
 }
 
+function scanPackageManifest(pkgPath, manifest, violations) {
+  if (!manifest || typeof manifest !== 'object') {
+    return;
+  }
+  for (const section of DEPENDENCY_SECTIONS) {
+    const deps = manifest[section];
+    if (!deps || typeof deps !== 'object') {
+      continue;
+    }
+    for (const depName of Object.keys(deps)) {
+      if (DISALLOWED_DEP_NAMES.has(depName)) {
+        violations.push(`Disallowed dependency "${depName}" in ${pkgPath} (${section})`);
+      }
+    }
+  }
+}
+
+function scanLegacyLockDependencies(deps, lockPathLabel, violations) {
+  if (!deps || typeof deps !== 'object') {
+    return;
+  }
+  for (const [depName, meta] of Object.entries(deps)) {
+    if (DISALLOWED_DEP_NAMES.has(depName)) {
+      violations.push(`Disallowed dependency "${depName}" in ${lockPathLabel}`);
+    }
+    if (meta && typeof meta === 'object') {
+      scanLegacyLockDependencies(meta.dependencies, `${lockPathLabel}.${depName}`, violations);
+      if (meta.requires && typeof meta.requires === 'object') {
+        for (const reqName of Object.keys(meta.requires)) {
+          if (DISALLOWED_DEP_NAMES.has(reqName)) {
+            violations.push(
+              `Disallowed dependency reference "${reqName}" in ${lockPathLabel}.${depName}.requires`,
+            );
+          }
+        }
+      }
+    }
+  }
+}
+
+function scanPackageLock(packageLockJson, violations) {
+  if (!packageLockJson || typeof packageLockJson !== 'object') {
+    return;
+  }
+
+  const packages = packageLockJson.packages;
+  if (packages && typeof packages === 'object') {
+    for (const [entryPath, entryMeta] of Object.entries(packages)) {
+      const normalized = entryPath.replace(/\\/g, '/');
+      if (DISALLOWED_LOCK_PATH_REGEX.test(normalized)) {
+        violations.push(`Disallowed lockfile package entry "${normalized}" in package-lock.json`);
+      }
+      if (!entryMeta || typeof entryMeta !== 'object') {
+        continue;
+      }
+      if (typeof entryMeta.name === 'string' && DISALLOWED_DEP_NAMES.has(entryMeta.name)) {
+        violations.push(
+          `Disallowed package name "${entryMeta.name}" at "${normalized || '(root)'}" in package-lock.json`,
+        );
+      }
+      for (const section of DEPENDENCY_SECTIONS) {
+        const deps = entryMeta[section];
+        if (!deps || typeof deps !== 'object') {
+          continue;
+        }
+        for (const depName of Object.keys(deps)) {
+          if (DISALLOWED_DEP_NAMES.has(depName)) {
+            violations.push(
+              `Disallowed dependency reference "${depName}" at "${normalized || '(root)'}" (${section}) in package-lock.json`,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  scanLegacyLockDependencies(
+    packageLockJson.dependencies,
+    'package-lock.json (dependencies)',
+    violations,
+  );
+}
+
 /**
  * Pure violation detector for the repository binary/license guard.
  * @param {{
  *   files: readonly string[],
  *   packageJson?: Record<string, unknown>,
+ *   workspacePackageJsons?: ReadonlyMap<string, Record<string, unknown>> | Readonly<Record<string, Record<string, unknown>>>,
+ *   packageLockJson?: Record<string, unknown>,
  *   fileContents?: ReadonlyMap<string, string> | Readonly<Record<string, string>>
  * }} input
  * @returns {string[]}
  */
-export function findViolations({ files, packageJson = {}, fileContents }) {
+export function findViolations({
+  files,
+  packageJson = {},
+  workspacePackageJsons,
+  packageLockJson,
+  fileContents,
+}) {
   const violations = [];
 
   for (const rawFile of files) {
@@ -75,17 +174,19 @@ export function findViolations({ files, packageJson = {}, fileContents }) {
     }
   }
 
-  for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
-    const deps = packageJson[section];
-    if (!deps || typeof deps !== 'object') {
-      continue;
-    }
-    for (const depName of Object.keys(deps)) {
-      if (depName === 'saxon-js' || depName === 'xslt3') {
-        violations.push(`Disallowed dependency "${depName}" in package.json (${section})`);
-      }
+  scanPackageManifest('package.json', packageJson, violations);
+
+  if (workspacePackageJsons) {
+    const entries =
+      workspacePackageJsons instanceof Map
+        ? workspacePackageJsons.entries()
+        : Object.entries(workspacePackageJsons);
+    for (const [manifestPath, manifest] of entries) {
+      scanPackageManifest(manifestPath.replace(/\\/g, '/'), manifest, violations);
     }
   }
+
+  scanPackageLock(packageLockJson, violations);
 
   return violations;
 }
@@ -118,6 +219,30 @@ function collectFiles(rootDir) {
   return walkLocalFiles(rootDir);
 }
 
+function readWorkspacePackageJsons(rootDir) {
+  const manifests = new Map();
+  const packagesDir = join(rootDir, 'packages');
+  if (!existsSync(packagesDir)) {
+    return manifests;
+  }
+  for (const entry of readdirSync(packagesDir)) {
+    const pkgFile = join(packagesDir, entry, 'package.json');
+    if (existsSync(pkgFile)) {
+      const rel = `packages/${entry}/package.json`;
+      manifests.set(rel, JSON.parse(readFileSync(pkgFile, 'utf8')));
+    }
+  }
+  return manifests;
+}
+
+function readPackageLockJson(rootDir) {
+  const lockPath = join(rootDir, 'package-lock.json');
+  if (!existsSync(lockPath)) {
+    return undefined;
+  }
+  return JSON.parse(readFileSync(lockPath, 'utf8'));
+}
+
 function readTextFileContents(rootDir, files) {
   const contents = new Map();
   for (const relPath of files) {
@@ -143,8 +268,16 @@ function main() {
   const root = process.cwd();
   const files = collectFiles(root);
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const workspacePackageJsons = readWorkspacePackageJsons(root);
+  const packageLockJson = readPackageLockJson(root);
   const fileContents = readTextFileContents(root, files);
-  const violations = findViolations({ files, packageJson: pkg, fileContents });
+  const violations = findViolations({
+    files,
+    packageJson: pkg,
+    workspacePackageJsons,
+    packageLockJson,
+    fileContents,
+  });
 
   if (violations.length > 0) {
     for (const v of violations) {

@@ -34,6 +34,16 @@ describe('XML fixture suite', () => {
     expect(result.diagnostics[0]?.code).toBe('XML_DTD_ENTITY_EXPANSION_DISABLED');
   });
 
+  it('warns without failing on dtd-external-entity.xml per XML 1.0 §4.1', () => {
+    const result = checkWellFormedness(loadFixture('dtd-external-entity.xml'));
+    expect(result.wellFormed).toBe(true);
+    expect(result.diagnostics.map((d) => d.code)).toEqual([
+      'XML_UNDECLARED_EXTERNAL_ENTITY',
+      'XML_EXTERNAL_DTD_IGNORED',
+    ]);
+    expect(result.diagnostics.every((d) => d.severity === 'warning')).toBe(true);
+  });
+
   it('stays fast and safe on security-billion-laughs.xml', () => {
     const t0 = performance.now();
     const result = checkWellFormedness(loadFixture('security-billion-laughs.xml'));
