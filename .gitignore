@@ -1,0 +1,6 @@
+node_modules/
+dist/
+plugins/saxonjs/*.js
+**/SaxonJS*
+**/saxon-js*
+.DS_Store
