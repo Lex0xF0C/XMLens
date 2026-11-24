@@ -1,6 +1,6 @@
 # XMLens
 
-> **Status:** Milestone M0 (Foundation Shell) — MIT-licensed, browser-only XML development and visualization workbench.
+> **Status:** Milestone M0 deployed (repository guard throwaway-branch verification per [`docs/legal/guard-verification.md`](./docs/legal/guard-verification.md) remains a pending manual maintainer task; M1 in progress). — MIT-licensed, browser-only XML development and visualization workbench.
 
 [日本語版 README (README.ja.md)](./README.ja.md)
 

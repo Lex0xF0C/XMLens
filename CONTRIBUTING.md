@@ -33,3 +33,4 @@ Before opening a PR:
 - Run `npm run check` (runs `lint`, `format:check`, `typecheck`, `test`, `i18n:check`, `plugins:guard`, and `license:check`) and `npm run build`.
 - Include in your PR description: summary, linked issue, test evidence, screenshots in both `en` and `ja` for UI changes, and dependency/license notes if `package.json` changed.
 - Update `docs/feature-matrix.md` and user docs (`en` + `ja`) when features change.
+- Update `CHANGELOG.md` under `[Unreleased]` in the same change for every user-visible, dependency, security, CSP, or license-policy change.

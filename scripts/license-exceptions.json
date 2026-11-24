@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "name": "minimatch",
+    "versionRange": "^11.0.9",
+    "license": "BlueOak-1.0.0",
+    "reason": "permissive license, dev-only transitive dependency of eslint/typescript-eslint",
+    "reviewed-by": "maintainer"
+  },
+  {
+    "name": "@isaacs/nonrecursive-glob-match",
+    "versionRange": "^1.1.0",
+    "license": "BlueOak-1.0.0",
+    "reason": "permissive license, dev-only transitive dependency of eslint/typescript-eslint",
+    "reviewed-by": "maintainer"
+  }
+]

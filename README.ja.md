@@ -1,6 +1,6 @@
 # XMLens
 
-> **状態:** マイルストーン M0 (基盤シェル) — MIT ライセンスのブラウザ完結型 XML 開発・構造可視化ワークベンチ
+> **状態:** マイルストーン M0 配備済み（[`docs/legal/guard-verification.md`](./docs/legal/guard-verification.md) の捨てブランチによるガード手動検証はメンテナによる未実施タスクとして残存、M1 進行中）— MIT ライセンスのブラウザ完結型 XML 開発・構造可視化ワークベンチ
 
 [English README (README.md)](./README.md)
 

@@ -11,6 +11,7 @@ const CATALOGS: Readonly<Record<LocaleCode, MessageCatalog>> = {
   ja: jaCatalog,
 };
 
+const APP_VERSION = '0.1.0';
 const STORAGE_LANG_KEY = 'xmlens.locale';
 const STORAGE_THEME_KEY = 'xmlens.theme';
 const MAX_PREVIEW_BYTES = 1024 * 1024;
@@ -70,7 +71,7 @@ function createEl<K extends keyof HTMLElementTagNameMap>(
 }
 
 interface ValidationStatus {
-  kind: 'empty' | 'valid' | 'invalid' | 'too-large';
+  kind: 'empty' | 'valid' | 'invalid' | 'too-large' | 'read-error';
   count?: number;
   root?: string;
   detail?: string;
@@ -126,23 +127,74 @@ function mountApp(): void {
     applyDocumentAttributes();
     root.replaceChildren();
 
-    const shell = createEl('div', { className: 'shell' });
+    const workbench = createEl('div', { className: 'workbench' });
 
     const skipLink = createEl('a', {
       className: 'skip-link',
       text: t('app.skipToMain'),
       attrs: { href: '#main-content' },
     });
-    shell.appendChild(skipLink);
+    workbench.appendChild(skipLink);
 
-    const header = createEl('header', { className: 'site-header' });
-    const brandGroup = createEl('div', { className: 'brand-group' });
-    brandGroup.appendChild(createEl('h1', { className: 'brand-title', text: t('app.name') }));
-    brandGroup.appendChild(createEl('span', { className: 'badge', text: t('status.badge') }));
-    header.appendChild(brandGroup);
+    const titleBar = createEl('header', { className: 'title-bar' });
+    titleBar.appendChild(createEl('h1', { className: 'app-title', text: t('app.name') }));
+    workbench.appendChild(titleBar);
+
+    const toolbar = createEl('div', {
+      className: 'toolbar',
+      attrs: { role: 'toolbar', 'aria-label': t('toolbar.label') },
+    });
+
+    const actionsGroup = createEl('div', { className: 'toolbar-actions' });
+    const fileInput = createEl('input', {
+      className: 'hidden-file-input',
+      attrs: {
+        type: 'file',
+        accept: '.xml,.xsd,.xsl,.xslt,.sch,.rng,.svg,application/xml,text/xml',
+        tabindex: '-1',
+        'aria-hidden': 'true',
+      },
+    });
+
+    const openBtn = createEl('button', {
+      className: 'tb-btn',
+      text: t('toolbar.openFile'),
+      attrs: { type: 'button' },
+    });
+    openBtn.addEventListener('click', () => {
+      fileInput.value = '';
+      fileInput.click();
+    });
+
+    const sampleBtn = createEl('button', {
+      className: 'tb-btn',
+      text: t('toolbar.loadSample'),
+      attrs: { type: 'button' },
+    });
+
+    const checkBtn = createEl('button', {
+      className: 'tb-btn',
+      text: t('toolbar.checkWellFormedness'),
+      attrs: { type: 'button' },
+    });
+
+    const aboutBtn = createEl('button', {
+      className: 'tb-btn',
+      text: t('toolbar.about'),
+      attrs: { id: 'about-button', type: 'button' },
+    });
+
+    actionsGroup.append(
+      fileInput,
+      openBtn,
+      sampleBtn,
+      checkBtn,
+      createEl('span', { className: 'toolbar-sep', attrs: { 'aria-hidden': 'true' } }),
+      aboutBtn,
+    );
 
     const settingsGroup = createEl('div', {
-      className: 'controls',
+      className: 'toolbar-settings',
       attrs: { role: 'group', 'aria-label': t('nav.settingsLabel') },
     });
 
@@ -153,6 +205,7 @@ function mountApp(): void {
       attrs: { for: 'locale-select' },
     });
     const langSelect = createEl('select', {
+      className: 'tb-select',
       attrs: { id: 'locale-select' },
     });
     for (const code of ['en', 'ja'] as const) {
@@ -183,6 +236,7 @@ function mountApp(): void {
       attrs: { for: 'theme-select' },
     });
     const themeSelect = createEl('select', {
+      className: 'tb-select',
       attrs: { id: 'theme-select' },
     });
     const themes: ReadonlyArray<readonly [ThemeMode, string]> = [
@@ -213,40 +267,23 @@ function mountApp(): void {
     themeGroup.append(themeLabel, themeSelect);
 
     settingsGroup.append(langGroup, themeGroup);
-    header.appendChild(settingsGroup);
-    shell.appendChild(header);
+    toolbar.append(actionsGroup, settingsGroup);
+    workbench.appendChild(toolbar);
 
-    const main = createEl('main', {
-      className: 'main-content',
+    const workspace = createEl('main', {
+      className: 'workspace',
       attrs: { id: 'main-content', tabindex: '-1' },
     });
 
-    const heroCard = createEl('section', { className: 'card' });
-    heroCard.appendChild(createEl('h2', { text: t('hero.heading') }));
-    heroCard.appendChild(createEl('p', { className: 'muted', text: t('hero.description') }));
-    heroCard.appendChild(createEl('p', { className: 'local-notice', text: t('status.localOnly') }));
-    main.appendChild(heroCard);
-
-    const statusCard = createEl('section', { className: 'card' });
-    statusCard.appendChild(createEl('h2', { text: t('status.contractHeading') }));
-    statusCard.appendChild(createEl('p', { className: 'muted', text: t('status.contractIntro') }));
-    const list = createEl('ul', { className: 'contract-list' });
-    const contractKeys: ReadonlyArray<MessageKey> = [
-      'status.contractItem1',
-      'status.contractItem2',
-      'status.contractItem3',
-    ];
-    for (const key of contractKeys) {
-      list.appendChild(createEl('li', { text: t(key) }));
-    }
-    statusCard.appendChild(list);
-    main.appendChild(statusCard);
-
-    const previewCard = createEl('section', { className: 'card' });
-    previewCard.appendChild(
+    const editorPane = createEl('section', {
+      className: 'pane',
+      attrs: { 'aria-labelledby': 'editor-pane-heading' },
+    });
+    editorPane.appendChild(
       createEl('h2', {
-        text: t('preview.heading'),
-        attrs: { id: 'xml-preview-heading' },
+        className: 'pane-header',
+        text: t('pane.editorHeading'),
+        attrs: { id: 'editor-pane-heading' },
       }),
     );
 
@@ -254,7 +291,7 @@ function mountApp(): void {
       className: 'xml-textarea',
       attrs: {
         id: 'xml-preview-input',
-        'aria-labelledby': 'xml-preview-heading',
+        'aria-labelledby': 'editor-pane-heading',
         placeholder: t('preview.placeholder'),
         spellcheck: 'false',
       },
@@ -263,71 +300,167 @@ function mountApp(): void {
     textarea.addEventListener('input', () => {
       xmlDraft = textarea.value;
     });
-    previewCard.appendChild(textarea);
+    editorPane.appendChild(textarea);
 
+    const diagnosticsPane = createEl('section', {
+      className: 'pane',
+      attrs: { 'aria-labelledby': 'diagnostics-pane-heading' },
+    });
+    diagnosticsPane.appendChild(
+      createEl('h2', {
+        className: 'pane-header',
+        text: t('pane.diagnosticsHeading'),
+        attrs: { id: 'diagnostics-pane-heading' },
+      }),
+    );
+
+    const diagnosticsBody = createEl('div', { className: 'diagnostics-body' });
     const resultBox = createEl('div', {
-      className: 'result-box',
+      className: 'diag-message',
       attrs: { role: 'status', 'aria-live': 'polite' },
     });
+    diagnosticsBody.appendChild(resultBox);
+    diagnosticsPane.appendChild(diagnosticsBody);
 
-    const updateResultBox = (): void => {
+    workspace.append(editorPane, diagnosticsPane);
+    workbench.appendChild(workspace);
+
+    const statusBar = createEl('footer', {
+      className: 'status-bar',
+      attrs: { role: 'contentinfo', 'aria-label': t('statusBar.label') },
+    });
+    const statusFields = createEl('div', { className: 'status-fields' });
+    const statusStateField = createEl('span', { className: 'status-field' });
+    const statusCountField = createEl('span', { className: 'status-field' });
+    const statusLangField = createEl('span', {
+      className: 'status-field',
+      text: t('statusBar.language'),
+    });
+    statusFields.append(statusStateField, statusCountField, statusLangField);
+
+    const statusPrivacyField = createEl('span', {
+      className: 'status-field',
+      text: t('statusBar.localOnly'),
+    });
+    statusBar.append(statusFields, statusPrivacyField);
+    workbench.appendChild(statusBar);
+
+    const aboutDialog = createEl('dialog', {
+      className: 'about-dialog',
+      attrs: { 'aria-labelledby': 'about-dialog-title' },
+    });
+    const aboutHeader = createEl('div', { className: 'about-header' });
+    aboutHeader.appendChild(
+      createEl('h2', {
+        className: 'about-title',
+        text: t('about.title'),
+        attrs: { id: 'about-dialog-title' },
+      }),
+    );
+    const aboutBody = createEl('div', { className: 'about-body' });
+    aboutBody.append(
+      createEl('p', { text: t('about.version', { version: APP_VERSION }) }),
+      createEl('p', { text: t('about.license') }),
+      createEl('p', { text: t('about.privacy') }),
+    );
+    const aboutFooter = createEl('div', { className: 'about-footer' });
+    const aboutCloseBtn = createEl('button', {
+      className: 'tb-btn',
+      text: t('about.close'),
+      attrs: { type: 'button' },
+    });
+    aboutFooter.appendChild(aboutCloseBtn);
+    aboutDialog.append(aboutHeader, aboutBody, aboutFooter);
+    workbench.appendChild(aboutDialog);
+
+    const updateStatusViews = (): void => {
       resultBox.classList.remove('is-valid', 'is-invalid');
       if (validationStatus.kind === 'empty') {
         resultBox.textContent = t('preview.empty');
+        statusStateField.textContent = t('statusBar.ready');
+        statusCountField.textContent = t('statusBar.elements', { count: 0 });
       } else if (validationStatus.kind === 'too-large') {
         resultBox.classList.add('is-invalid');
         resultBox.textContent = t('preview.tooLarge', {
           limitMb: validationStatus.limitMb ?? 1,
         });
+        statusStateField.textContent = t('statusBar.tooLarge');
+        statusCountField.textContent = t('statusBar.elements', { count: 0 });
+      } else if (validationStatus.kind === 'read-error') {
+        resultBox.classList.add('is-invalid');
+        resultBox.textContent = t('preview.readError', {
+          detail: validationStatus.detail ?? '',
+        });
+        statusStateField.textContent = t('statusBar.notWellFormed');
+        statusCountField.textContent = t('statusBar.elements', { count: 0 });
       } else if (validationStatus.kind === 'valid') {
         resultBox.classList.add('is-valid');
+        const count = validationStatus.count ?? 0;
         resultBox.textContent = t('preview.valid', {
-          count: validationStatus.count ?? 0,
+          count,
           root: validationStatus.root ?? '',
         });
+        statusStateField.textContent = t('statusBar.wellFormed');
+        statusCountField.textContent = t('statusBar.elements', { count });
       } else {
         resultBox.classList.add('is-invalid');
         resultBox.textContent = t('preview.invalid', {
           detail: validationStatus.detail ?? '',
         });
+        statusStateField.textContent = t('statusBar.notWellFormed');
+        statusCountField.textContent = t('statusBar.elements', { count: 0 });
       }
     };
-    updateResultBox();
+    updateStatusViews();
 
-    const buttonRow = createEl('div', { className: 'button-row' });
-    const sampleBtn = createEl('button', {
-      className: 'btn',
-      text: t('preview.sampleButton'),
-      attrs: { type: 'button' },
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files?.[0];
+      if (!file) {
+        return;
+      }
+      if (file.size > MAX_PREVIEW_BYTES) {
+        validationStatus = { kind: 'too-large', limitMb: 1 };
+        updateStatusViews();
+        return;
+      }
+      try {
+        xmlDraft = await file.text();
+        textarea.value = xmlDraft;
+        validationStatus = checkXmlWellFormedness(xmlDraft);
+      } catch (err: unknown) {
+        const detail = err instanceof Error ? err.message : String(err);
+        validationStatus = { kind: 'read-error', detail };
+      }
+      updateStatusViews();
     });
+
     sampleBtn.addEventListener('click', () => {
       xmlDraft = t('preview.sampleXml');
       textarea.value = xmlDraft;
       validationStatus = checkXmlWellFormedness(xmlDraft);
-      updateResultBox();
+      updateStatusViews();
     });
 
-    const checkBtn = createEl('button', {
-      className: 'btn btn-primary',
-      text: t('preview.checkButton'),
-      attrs: { type: 'button' },
-    });
     checkBtn.addEventListener('click', () => {
       validationStatus = checkXmlWellFormedness(textarea.value);
-      updateResultBox();
+      updateStatusViews();
     });
 
-    buttonRow.append(sampleBtn, checkBtn);
-    previewCard.append(buttonRow, resultBox);
-    main.appendChild(previewCard);
+    aboutBtn.addEventListener('click', () => {
+      if (!aboutDialog.open) {
+        aboutDialog.showModal();
+      }
+    });
 
-    shell.appendChild(main);
+    aboutCloseBtn.addEventListener('click', () => {
+      aboutDialog.close();
+    });
 
-    const footer = createEl('footer', { className: 'site-footer' });
-    footer.appendChild(createEl('span', { text: t('footer.license') }));
-    shell.appendChild(footer);
+    aboutDialog.addEventListener('close', () => {
+      document.getElementById('about-button')?.focus();
+    });
 
-    root.appendChild(shell);
+    root.appendChild(workbench);
   };
 
   render();

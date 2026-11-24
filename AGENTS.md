@@ -111,6 +111,13 @@ Keep `packages/core` free of DOM and browser globals so it can later power a CLI
 - Tree view follows the ARIA tree pattern. Every graph/diagram view must have a textual or tabular alternative.
 - Add or update axe checks in e2e tests for any new UI surface.
 
+### 4.5 UI design principles
+- Legacy desktop-application feel: compact title bar, plain toolbar or accessible menu, bordered split panes, and a bottom status bar.
+- No development-status or milestone text (such as "M0 Foundation") and no marketing/hero copy anywhere in the product UI.
+- Flat, dense utilitarian styling: small square corners (`0–2px` radius), `1px` borders, no drop shadows, no gradients, no pill badges, no emoji, no pastel fills; reserve accent color strictly for focus rings, selection, and error emphasis.
+- Show only controls that actually work; never render fake or disabled menus for unimplemented features.
+- Version, MIT license, and privacy notice live in an accessible `<dialog>` About box (with a brief local-only indicator in the status bar).
+
 ## 5. Coding conventions
 
 - **TypeScript strict mode.** No `any` without a justification comment. Prefer `unknown` plus narrowing. No unchecked non-null assertions in core logic.
@@ -138,7 +145,7 @@ Keep `packages/core` free of DOM and browser globals so it can later power a CLI
 2. **Small, focused changes.** One concern per PR. Keep diffs reviewable.
 3. **Respect priorities.** Do not implement P2/P3 or "OUT" items from the plan unless an issue and (if architectural) an ADR exist.
 4. **Write an ADR** (`docs/adr/NNNN-title.md`: context, decision, consequences, alternatives) for: new framework/library of significance, CSP changes, data format changes, license-sensitive choices, anything marked "Open decisions" in the plan.
-5. **Update docs with code:** user docs (en + ja), `docs/feature-matrix.md`, and this file when commands or rules change.
+5. **Update docs and changelog with code:** user docs (en + ja), `docs/feature-matrix.md`, and this file when commands or rules change. Every user-visible, dependency, security, CSP, or license-policy change must update `CHANGELOG.md` under `[Unreleased]` in the same change.
 6. **When uncertain, ask** rather than guess. Especially for: licensing, scope, security posture, destructive operations, and translations of domain terminology.
 7. **Do not fabricate.** Don't invent API behavior, package features, standards details, or test results. Verify against official docs or by running code, and cite the source in the PR when it matters (e.g., a W3C/OASIS section).
 
@@ -173,6 +180,7 @@ A change is done only when:
 - [ ] No new network calls, no CSP loosening, no disallowed licenses
 - [ ] No SaxonJS/`xslt3` file in the workspace or git; `package.json` and lockfile unchanged in that respect; repository guard passes
 - [ ] Docs and feature matrix updated (en + ja where user-facing)
+- [ ] `CHANGELOG.md` updated under `[Unreleased]` for any user-visible, dependency, security, CSP, or license-policy change
 - [ ] Risks, limitations, and unverified assumptions are stated in the PR description
 
 ## 11. Ask before doing any of the following

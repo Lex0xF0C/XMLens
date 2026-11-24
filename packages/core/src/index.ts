@@ -43,3 +43,10 @@ export function formatMessage(
     return value !== undefined ? String(value) : match;
   });
 }
+
+export {
+  checkWellFormedness,
+  type WellFormednessOptions,
+  type WellFormednessResult,
+  type XmlDeclarationInfo,
+} from './wellFormedness';
