@@ -35,16 +35,17 @@ Requirements: Node.js LTS, npm. Contributors use Windows, macOS, and Linux, so *
 npm ci                 # install exactly from the lockfile
 npm run dev            # Vite dev server
 npm run build          # production build (static output in dist/)
-npm run plugins:fetch  # CI ONLY (refuses to run unless GITHUB_ACTIONS=true): downloads pinned SaxonJS via `npm pack`, verifies integrity + license hash, copies it unmodified into dist/plugins/. NEVER run in AI Studio or locally.
+npm run plugins:fetch  # CI ONLY (planned for M4, not yet implemented in M0; refuses to run unless GITHUB_ACTIONS=true): downloads pinned SaxonJS via `npm pack`, verifies integrity + license hash, copies it unmodified into dist/plugins/. NEVER run in AI Studio or locally.
 npm run preview        # serve the production build locally (test the sub-path base too)
 npm run lint           # ESLint
 npm run format         # Prettier (write); `format:check` for CI
-npm run typecheck      # tsc --noEmit (strict)
+npm run typecheck      # tsc --noEmit (strict, root + packages/core DOM-free check)
 npm run test           # Vitest unit tests
-npm run test:e2e       # Playwright (Chromium, Firefox, WebKit) incl. axe a11y checks
-npm run i18n:check     # key parity between locales/en.json and locales/ja.json
+npm run test:e2e       # Playwright (Chromium, Firefox, WebKit) incl. axe a11y checks (not yet implemented in M0)
+npm run i18n:check     # key parity, placeholder parity, and non-empty check between locales/en.json and locales/ja.json
+npm run plugins:guard  # fails on disallowed Saxon/xslt3 paths, dependencies, or vendor notices
 npm run license:check  # fails on disallowed dependency licenses
-npm run check          # lint + typecheck + test + i18n:check + license:check
+npm run check          # lint + typecheck + test + i18n:check + plugins:guard + license:check
 ```
 
 Before declaring any task done, run `npm run check` (and `npm run test:e2e` if UI changed). Report what you ran and the result. If you could not run something, say so explicitly. Do not claim success without evidence.

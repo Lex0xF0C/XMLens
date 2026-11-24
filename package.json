@@ -5,6 +5,9 @@
   "description": "Browser-only, MIT-licensed XML development and visualization tool.",
   "license": "MIT",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "workspaces": [
     "packages/*"
   ],
@@ -13,16 +16,22 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 3000",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit && tsc -p packages/core/tsconfig.json --noEmit",
+    "test": "vitest run",
     "i18n:check": "node scripts/check-i18n.mjs",
     "plugins:guard": "node scripts/check-no-third-party-binaries.mjs",
-    "check": "npm run lint && npm run typecheck && npm run i18n:check && npm run plugins:guard"
+    "license:check": "node scripts/check-licenses.mjs",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run i18n:check && npm run plugins:guard && npm run license:check"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.15.0",
+    "prettier": "^3.10.1",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.74.0",
-    "vite": "^8.3.8"
+    "vite": "^7.3.8",
+    "vitest": "^5.1.1"
   }
 }

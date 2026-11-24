@@ -1,8 +1,9 @@
-import { formatMessage, type LocaleCode, type MessageCatalog } from '../../core/src/index';
+import { formatMessage, type LocaleCode, type MessageCatalog } from '@xmlens/core';
 import enCatalog from '../../../locales/en.json';
 import jaCatalog from '../../../locales/ja.json';
 
 type ThemeMode = 'light' | 'dark' | 'high-contrast';
+type MessageKey = keyof typeof enCatalog;
 
 const CATALOGS: Readonly<Record<LocaleCode, MessageCatalog>> = {
   en: enCatalog,
@@ -81,6 +82,8 @@ function checkXmlWellFormedness(xmlInput: string): ValidationStatus {
 
   const parser = new DOMParser();
   const doc = parser.parseFromString(trimmed, 'application/xml');
+  // M0 temporary check using main-thread DOMParser; M1 will replace this with a Web Worker parser.
+  // Known limitation: valid XML that legitimately contains a <parsererror> element can be misclassified as malformed.
   const parserError = doc.querySelector('parsererror');
   if (parserError) {
     const detail = (parserError.textContent ?? '').replace(/\s+/g, ' ').trim();
@@ -103,7 +106,7 @@ function mountApp(): void {
   let xmlDraft = '';
   let validationStatus: ValidationStatus = { kind: 'empty' };
 
-  const t = (key: string, params?: Readonly<Record<string, string | number>>): string =>
+  const t = (key: MessageKey, params?: Readonly<Record<string, string | number>>): string =>
     formatMessage(CATALOGS[locale], CATALOGS.en, key, params);
 
   const applyDocumentAttributes = (): void => {
@@ -131,9 +134,9 @@ function mountApp(): void {
     brandGroup.appendChild(createEl('span', { className: 'badge', text: t('status.badge') }));
     header.appendChild(brandGroup);
 
-    const nav = createEl('nav', {
+    const settingsGroup = createEl('div', {
       className: 'controls',
-      attrs: { 'aria-label': t('app.name') },
+      attrs: { role: 'group', 'aria-label': t('nav.settingsLabel') },
     });
 
     const langGroup = createEl('div', { className: 'control-group' });
@@ -162,6 +165,7 @@ function mountApp(): void {
         // Ignore storage access restrictions.
       }
       render();
+      document.getElementById('locale-select')?.focus();
     });
     langGroup.append(langLabel, langSelect);
 
@@ -201,8 +205,8 @@ function mountApp(): void {
     });
     themeGroup.append(themeLabel, themeSelect);
 
-    nav.append(langGroup, themeGroup);
-    header.appendChild(nav);
+    settingsGroup.append(langGroup, themeGroup);
+    header.appendChild(settingsGroup);
     shell.appendChild(header);
 
     const main = createEl('main', {
@@ -217,15 +221,15 @@ function mountApp(): void {
     main.appendChild(heroCard);
 
     const statusCard = createEl('section', { className: 'card' });
-    statusCard.appendChild(createEl('h2', { text: t('openDecisions.heading') }));
-    statusCard.appendChild(createEl('p', { className: 'muted', text: t('openDecisions.intro') }));
+    statusCard.appendChild(createEl('h2', { text: t('status.contractHeading') }));
+    statusCard.appendChild(createEl('p', { className: 'muted', text: t('status.contractIntro') }));
     const list = createEl('ul', { className: 'contract-list' });
-    for (const key of [
-      'openDecisions.item1',
-      'openDecisions.item2',
-      'openDecisions.item3',
-      'openDecisions.item4',
-    ]) {
+    const contractKeys: ReadonlyArray<MessageKey> = [
+      'status.contractItem1',
+      'status.contractItem2',
+      'status.contractItem3',
+    ];
+    for (const key of contractKeys) {
       list.appendChild(createEl('li', { text: t(key) }));
     }
     statusCard.appendChild(list);
