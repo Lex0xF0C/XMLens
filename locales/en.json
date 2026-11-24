@@ -24,6 +24,7 @@
   "preview.empty": "Enter or load an XML snippet to inspect.",
   "preview.valid": "Well-formed XML ({count} elements, root: <{root}>).",
   "preview.invalid": "Not well-formed XML: {detail}",
+  "preview.tooLarge": "Input exceeds the {limitMb} MB preview limit. Large-file worker support arrives in M1/M2.",
   "preview.sampleXml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<akomaNtoso xmlns=\"http://docs.oasis-open.org/legaldocml/ns/akn/3.0\">\n  <act name=\"sample\">\n    <meta>\n      <identification source=\"#xmlens\">\n        <FRBRWork>\n          <FRBRthis value=\"/akn/un/act/2026/sample\"/>\n        </FRBRWork>\n      </identification>\n    </meta>\n    <body>\n      <article eId=\"art_1\">\n        <num>Article 1</num>\n        <paragraph eId=\"art_1__para_1\">\n          <content>\n            <p>All XML processing stays in your browser.</p>\n          </content>\n        </paragraph>\n      </article>\n    </body>\n  </act>\n</akomaNtoso>",
   "footer.license": "MIT License · Static client-side build"
 }

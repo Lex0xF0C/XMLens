@@ -29,7 +29,7 @@ Read `docs/IMPLEMENTATION_PLAN.md` first. It is the source of truth for scope, p
 
 > The repository is scaffolded in milestone M0. Until then these scripts are the **contract** the scaffold must provide. Once they exist, keep this section accurate.
 
-Requirements: Node.js LTS, npm. Contributors use Windows, macOS, and Linux, so **every script must be cross-platform**. No bash-only scripts, no `rm -rf`, no `sed`; use Node scripts or cross-platform packages.
+Requirements: Node.js LTS (>= 22.12.0), npm. Contributors use Windows, macOS, and Linux, so **every script must be cross-platform**. No bash-only scripts, no `rm -rf`, no `sed`; use Node scripts or cross-platform packages.
 
 ```
 npm ci                 # install exactly from the lockfile
@@ -44,8 +44,8 @@ npm run test           # Vitest unit tests
 npm run test:e2e       # Playwright (Chromium, Firefox, WebKit) incl. axe a11y checks (not yet implemented in M0)
 npm run i18n:check     # key parity, placeholder parity, and non-empty check between locales/en.json and locales/ja.json
 npm run plugins:guard  # fails on disallowed Saxon/xslt3 paths, dependencies, or vendor notices
-npm run license:check  # fails on disallowed dependency licenses
-npm run check          # lint + typecheck + test + i18n:check + plugins:guard + license:check
+npm run license:check  # fails on disallowed or unverified dependency licenses
+npm run check          # lint + format:check + typecheck + test + i18n:check + plugins:guard + license:check
 ```
 
 Before declaring any task done, run `npm run check` (and `npm run test:e2e` if UI changed). Report what you ran and the result. If you could not run something, say so explicitly. Do not claim success without evidence.

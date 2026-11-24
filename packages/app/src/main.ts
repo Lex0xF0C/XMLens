@@ -1,6 +1,7 @@
 import { formatMessage, type LocaleCode, type MessageCatalog } from '@xmlens/core';
 import enCatalog from '../../../locales/en.json';
 import jaCatalog from '../../../locales/ja.json';
+import './styles.css';
 
 type ThemeMode = 'light' | 'dark' | 'high-contrast';
 type MessageKey = keyof typeof enCatalog;
@@ -12,6 +13,7 @@ const CATALOGS: Readonly<Record<LocaleCode, MessageCatalog>> = {
 
 const STORAGE_LANG_KEY = 'xmlens.locale';
 const STORAGE_THEME_KEY = 'xmlens.theme';
+const MAX_PREVIEW_BYTES = 1024 * 1024;
 
 function detectInitialLocale(): LocaleCode {
   const params = new URLSearchParams(window.location.search);
@@ -68,16 +70,21 @@ function createEl<K extends keyof HTMLElementTagNameMap>(
 }
 
 interface ValidationStatus {
-  kind: 'empty' | 'valid' | 'invalid';
+  kind: 'empty' | 'valid' | 'invalid' | 'too-large';
   count?: number;
   root?: string;
   detail?: string;
+  limitMb?: number;
 }
 
 function checkXmlWellFormedness(xmlInput: string): ValidationStatus {
   const trimmed = xmlInput.trim();
   if (!trimmed) {
     return { kind: 'empty' };
+  }
+
+  if (new TextEncoder().encode(trimmed).byteLength > MAX_PREVIEW_BYTES) {
+    return { kind: 'too-large', limitMb: 1 };
   }
 
   const parser = new DOMParser();
@@ -236,13 +243,18 @@ function mountApp(): void {
     main.appendChild(statusCard);
 
     const previewCard = createEl('section', { className: 'card' });
-    previewCard.appendChild(createEl('h2', { text: t('preview.heading') }));
+    previewCard.appendChild(
+      createEl('h2', {
+        text: t('preview.heading'),
+        attrs: { id: 'xml-preview-heading' },
+      }),
+    );
 
     const textarea = createEl('textarea', {
       className: 'xml-textarea',
       attrs: {
         id: 'xml-preview-input',
-        'aria-label': t('preview.heading'),
+        'aria-labelledby': 'xml-preview-heading',
         placeholder: t('preview.placeholder'),
         spellcheck: 'false',
       },
@@ -262,6 +274,11 @@ function mountApp(): void {
       resultBox.classList.remove('is-valid', 'is-invalid');
       if (validationStatus.kind === 'empty') {
         resultBox.textContent = t('preview.empty');
+      } else if (validationStatus.kind === 'too-large') {
+        resultBox.classList.add('is-invalid');
+        resultBox.textContent = t('preview.tooLarge', {
+          limitMb: validationStatus.limitMb ?? 1,
+        });
       } else if (validationStatus.kind === 'valid') {
         resultBox.classList.add('is-valid');
         resultBox.textContent = t('preview.valid', {

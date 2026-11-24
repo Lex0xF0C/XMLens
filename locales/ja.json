@@ -24,6 +24,7 @@
   "preview.empty": "検査する XML を入力または読み込んでください。",
   "preview.valid": "整形式の XML です (要素数: {count}、ルート要素: <{root}>)。",
   "preview.invalid": "整形式エラー: {detail}",
+  "preview.tooLarge": "入力がプレビュー上限の {limitMb} MB を超えています。大容量ファイルの Worker 対応は M1/M2 で実装予定です。",
   "preview.sampleXml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<akomaNtoso xmlns=\"http://docs.oasis-open.org/legaldocml/ns/akn/3.0\">\n  <act name=\"sample\">\n    <meta>\n      <identification source=\"#xmlens\">\n        <FRBRWork>\n          <FRBRthis value=\"/akn/un/act/2026/sample\"/>\n        </FRBRWork>\n      </identification>\n    </meta>\n    <body>\n      <article eId=\"art_1\">\n        <num>第1条</num>\n        <paragraph eId=\"art_1__para_1\">\n          <content>\n            <p>すべての XML 処理はお使いのブラウザ内で完結します。</p>\n          </content>\n        </paragraph>\n      </article>\n    </body>\n  </act>\n</akomaNtoso>",
   "footer.license": "MIT ライセンス · 静的クライアントサイドビルド"
 }

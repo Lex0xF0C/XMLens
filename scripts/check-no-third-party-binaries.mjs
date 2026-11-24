@@ -92,12 +92,11 @@ export function findViolations({ files, packageJson = {}, fileContents }) {
 
 function walkLocalFiles(rootDir, currentDir = rootDir, results = []) {
   for (const entry of readdirSync(currentDir)) {
-    const fullPath = join(currentDir, entry);
-    const relPath = relative(rootDir, fullPath).replace(/\\/g, '/');
-    const topDir = relPath.split('/')[0];
-    if (IGNORED_LOCAL_DIRS.has(topDir)) {
+    if (IGNORED_LOCAL_DIRS.has(entry)) {
       continue;
     }
+    const fullPath = join(currentDir, entry);
+    const relPath = relative(rootDir, fullPath).replace(/\\/g, '/');
     const stat = statSync(fullPath);
     if (stat.isDirectory()) {
       walkLocalFiles(rootDir, fullPath, results);

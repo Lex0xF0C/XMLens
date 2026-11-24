@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   root: 'packages/app',
   base: './',
+  cacheDir: '../../node_modules/.vite',
   build: {
     outDir: '../../dist',
     emptyOutDir: true,

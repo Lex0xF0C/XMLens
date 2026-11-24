@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export const ALLOWED_LICENSES = new Set([
   'MIT',
@@ -12,8 +13,8 @@ export const ALLOWED_LICENSES = new Set([
   'Unlicense',
 ]);
 
-// Known non-OSI / copyleft licenses that are explicitly disallowed per AGENTS.md §4.1.3.
-const EXPLICITLY_DISALLOWED_TOKENS = ['GPL', 'AGPL', 'LGPL', 'SSPL', 'MPL-2.0'];
+// Licenses that are unconditionally disallowed unless explicitly handled otherwise.
+const HARD_DISALLOWED_TOKENS = ['GPL', 'AGPL', 'LGPL', 'SSPL'];
 
 function normalizeLicenseField(pkg) {
   if (typeof pkg.license === 'string') {
@@ -72,6 +73,7 @@ function splitTopLevel(expr, operator) {
 
 /**
  * Classifies an SPDX license expression into 'allowed', 'disallowed', or 'unverified'.
+ * MPL-2.0 is rejected ('disallowed') by default unless granted a reviewed maintainer exception.
  */
 export function classifyLicense(rawExpr) {
   if (!rawExpr || typeof rawExpr !== 'string') {
@@ -103,13 +105,160 @@ export function classifyLicense(rawExpr) {
   }
 
   const upper = expr.toUpperCase();
-  for (const token of EXPLICITLY_DISALLOWED_TOKENS) {
+  if (upper === 'MPL-2.0') {
+    return 'disallowed';
+  }
+
+  for (const token of HARD_DISALLOWED_TOKENS) {
     if (upper === token || upper.startsWith(`${token}-`) || upper.includes(token)) {
       return 'disallowed';
     }
   }
 
   return 'unverified';
+}
+
+function parseSemver(version) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(version).trim());
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareSemver(a, b) {
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
+}
+
+/**
+ * Checks whether a concrete package version matches an exception version range.
+ * Supports '*', exact versions, '^x.y.z', '~x.y.z', and simple comparator ranges (>=, <=, >, <).
+ */
+export function matchesVersionRange(version, range) {
+  if (!range || typeof range !== 'string') return false;
+  const trimmed = range.trim();
+  if (trimmed === '*') return true;
+  if (trimmed === version) return true;
+
+  const v = parseSemver(version);
+  if (!v) return false;
+
+  if (trimmed.startsWith('^')) {
+    const base = parseSemver(trimmed.slice(1));
+    if (!base) return false;
+    if (compareSemver(v, base) < 0) return false;
+    if (base[0] > 0) return v[0] === base[0];
+    if (base[1] > 0) return v[0] === 0 && v[1] === base[1];
+    return v[0] === 0 && v[1] === 0 && v[2] === base[2];
+  }
+
+  if (trimmed.startsWith('~')) {
+    const base = parseSemver(trimmed.slice(1));
+    if (!base) return false;
+    return compareSemver(v, base) >= 0 && v[0] === base[0] && v[1] === base[1];
+  }
+
+  const clauses = trimmed.split(/\s+/);
+  for (const clause of clauses) {
+    const m = /^(>=|<=|>|<|=)?(.+)$/.exec(clause);
+    if (!m) return false;
+    const op = m[1] ?? '=';
+    const target = parseSemver(m[2]);
+    if (!target) return false;
+    const cmp = compareSemver(v, target);
+    if (op === '=' && cmp !== 0) return false;
+    if (op === '>=' && cmp < 0) return false;
+    if (op === '<=' && cmp > 0) return false;
+    if (op === '>' && cmp <= 0) return false;
+    if (op === '<' && cmp >= 0) return false;
+  }
+  return true;
+}
+
+function extractPackageName(pkgPath) {
+  const idx = pkgPath.lastIndexOf('node_modules/');
+  if (idx === -1) return pkgPath;
+  return pkgPath.slice(idx + 'node_modules/'.length);
+}
+
+function isHardDisallowed(licenseExpr) {
+  if (!licenseExpr) return false;
+  const upper = licenseExpr.toUpperCase();
+  return HARD_DISALLOWED_TOKENS.some(
+    (token) => upper === token || upper.startsWith(`${token}-`) || upper.includes(token),
+  );
+}
+
+function findMatchingException(pkgName, version, licenseExpr, exceptions) {
+  if (!Array.isArray(exceptions) || isHardDisallowed(licenseExpr)) {
+    return null;
+  }
+  for (const entry of exceptions) {
+    if (!entry || typeof entry !== 'object') continue;
+    const reviewedBy = entry['reviewed-by'] ?? entry.reviewedBy;
+    const versionRange = entry.versionRange ?? entry.version;
+    if (
+      entry.name === pkgName &&
+      entry.license === licenseExpr &&
+      typeof entry.reason === 'string' &&
+      entry.reason.trim().length > 0 &&
+      typeof reviewedBy === 'string' &&
+      reviewedBy.trim().length > 0 &&
+      matchesVersionRange(version, versionRange)
+    ) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+/**
+ * Evaluates a list of installed packages against the license policy and reviewed exceptions.
+ */
+export function evaluatePackages(packages, exceptions = []) {
+  const disallowed = [];
+  const unverified = [];
+  const excepted = [];
+
+  for (const pkg of packages) {
+    const status = classifyLicense(pkg.license);
+    const label = `${pkg.path} (${pkg.version}): ${pkg.license ?? 'MISSING'}`;
+    if (status === 'allowed') {
+      continue;
+    }
+
+    const exception = findMatchingException(pkg.name, pkg.version, pkg.license, exceptions);
+    if (exception) {
+      excepted.push(label);
+      continue;
+    }
+
+    if (status === 'disallowed') {
+      disallowed.push(label);
+    } else {
+      unverified.push(label);
+    }
+  }
+
+  return { disallowed, unverified, excepted };
+}
+
+export function loadLicenseExceptions(rootDir) {
+  const exceptionsPath = join(rootDir, 'scripts', 'license-exceptions.json');
+  if (!existsSync(exceptionsPath)) {
+    return [];
+  }
+  const parsed = JSON.parse(readFileSync(exceptionsPath, 'utf8'));
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+  if (parsed && typeof parsed === 'object' && Array.isArray(parsed.exceptions)) {
+    return parsed.exceptions;
+  }
+  throw new Error(
+    'scripts/license-exceptions.json must contain a JSON array or { exceptions: [] }.',
+  );
 }
 
 function main() {
@@ -121,13 +270,11 @@ function main() {
   }
 
   const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
-  const packages = lock.packages ?? {};
+  const lockPackages = lock.packages ?? {};
+  const exceptions = loadLicenseExceptions(root);
+  const packagesToCheck = [];
 
-  const disallowed = [];
-  const unverified = [];
-  let checkedCount = 0;
-
-  for (const [pkgPath, lockMeta] of Object.entries(packages)) {
+  for (const [pkgPath, lockMeta] of Object.entries(lockPackages)) {
     if (!pkgPath || !pkgPath.startsWith('node_modules/') || lockMeta.link) {
       continue;
     }
@@ -143,22 +290,25 @@ function main() {
       }
     }
 
-    checkedCount += 1;
-    const status = classifyLicense(licenseExpr);
-    const label = `${pkgPath} (${lockMeta.version ?? 'unknown'}): ${licenseExpr ?? 'MISSING'}`;
-    if (status === 'disallowed') {
-      disallowed.push(label);
-    } else if (status === 'unverified') {
-      unverified.push(label);
-    }
+    packagesToCheck.push({
+      path: pkgPath,
+      name: extractPackageName(pkgPath),
+      version: lockMeta.version ?? 'unknown',
+      license: licenseExpr,
+    });
   }
 
-  console.log(`License check inspected ${checkedCount} installed packages.`);
+  const { disallowed, unverified, excepted } = evaluatePackages(packagesToCheck, exceptions);
+
+  console.log(`License check inspected ${packagesToCheck.length} installed packages.`);
+  if (excepted.length > 0) {
+    console.log(`Approved exceptions applied: ${excepted.length}`);
+  }
 
   if (unverified.length > 0) {
-    console.warn('Unverified license entries (review required):');
+    console.error('Unverified license entries found (maintainer review or exception required):');
     for (const item of unverified) {
-      console.warn(`  - [unverified] ${item}`);
+      console.error(`  - [unverified] ${item}`);
     }
   }
 
@@ -167,16 +317,15 @@ function main() {
     for (const item of disallowed) {
       console.error(`  - ${item}`);
     }
+  }
+
+  if (disallowed.length > 0 || unverified.length > 0) {
     process.exit(1);
   }
 
-  if (unverified.length > 0) {
-    console.log(
-      `License check completed with ${unverified.length} unverified package(s) and 0 disallowed packages.`,
-    );
-  } else {
-    console.log('License check passed: all packages use allowed licenses.');
-  }
+  console.log('License check passed: all packages use allowed or approved-exception licenses.');
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

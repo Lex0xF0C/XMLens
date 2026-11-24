@@ -17,12 +17,12 @@ See [`docs/IMPLEMENTATION_PLAN.md`](./docs/IMPLEMENTATION_PLAN.md) and [`docs/fe
 
 ## Development
 
-Requirements: Node.js LTS (`>= 22.0.0`) and `npm`.
+Requirements: Node.js LTS (`>= 22.12.0`) and `npm`.
 
 ```bash
 npm ci             # Install dependencies from package-lock.json
 npm run dev        # Start the Vite dev server (http://localhost:3000)
-npm run check      # Run lint, typecheck, unit tests, i18n check, binary guard, and license check
+npm run check      # Run lint, format:check, typecheck, unit tests, i18n check, binary guard, and license check
 npm run build      # Build the static production bundle into dist/
 npm run preview    # Preview the production build locally
 ```

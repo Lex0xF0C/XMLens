@@ -17,12 +17,12 @@ XMLens は、XML 文書の編集・検証・クエリ・変換・比較・構造
 
 ## 開発手順
 
-必要環境: Node.js LTS (`>= 22.0.0`) および `npm`。
+必要環境: Node.js LTS (`>= 22.12.0`) および `npm`。
 
 ```bash
 npm ci             # package-lock.json に基づき依存関係をインストール
 npm run dev        # Vite 開発サーバを起動 (http://localhost:3000)
-npm run check      # lint / typecheck / test / i18n:check / plugins:guard / license:check を実行
+npm run check      # lint / format:check / typecheck / test / i18n:check / plugins:guard / license:check を実行
 npm run build      # dist/ に静的プロダクションビルドを出力
 npm run preview    # プロダクションビルドをローカルでプレビュー
 ```
