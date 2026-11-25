@@ -13,6 +13,8 @@
 
 **設計方針の更新(XSLT関連):** ブラウザ内蔵のXSLT(`XSLTProcessor`)は、Chrome等で削除が進んでおり、当てにしません。XSLT 2.0/3.0は、Saxonica社のSaxonJS(オープンソースではないが、変更なしの再配布は条件付きで許可)を**任意プラグインとして同梱**して対応します(既定はオフ、ビルド時に取得して変更せず配置、リポジトリにはコミットしない)。ライセンス条件4(第三者への提供が主目的のサイトへのコピー禁止)については、「本サイトはXMLエディタというアプリケーションであり、ソフトウェア頒布サイトではない」という解釈に基づき、**書面での許諾を取らずに進める**とメンテナが判断しました(ADR-0002に根拠と前提を記録)。この解釈が崩れないよう、SaxonJSを単体でダウンロードさせる導線や複製(ミラー)を作らない運用ルールを設けます。SaxonJSのブラウザ版は**コンパイル済み(SEF形式)のスタイルシートを実行する設計**で、編集中のXSLTをブラウザ内でコンパイルできるかは未確認のため、最初にスパイクで確かめます。
 
+**設計方針の補足(XML Project・リソース解決):** 複数ファイル、OASIS XML Catalog、検証/変換シナリオは **XML Project** として統合し、共通の Resource Resolver が事前収集した不変の `ResourceBundle` を介して Worker 内エンジンへ渡します(ADR-0008 / ADR-0009)。v1 では外部ネットワークからの自動取得を行わず、Project 内ファイル、Profile Pack、およびユーザー添付で解決します。
+
 ---
 
 ## 1. Goals and non-goals
@@ -66,7 +68,7 @@ Priority legend: **P0** = MVP · **P1** = v1.0 · **P2** = after v1.0 · **P3** 
 | Schema Design mode (visual XSD editing) | Read-only XSD diagram first; editing later | Medium–Hard | P1 (view) / P3 (edit) |
 | Author mode (CSS-based WYSIWYG) | — | Hard | OUT |
 | Code templates, snippets | Snippet library, user-defined, import/export JSON | Easy | P1 |
-| Multi-file project view, search & replace across files | Workspace (File System Access API where available, otherwise IndexedDB) | Medium | P1 |
+| Multi-file project view, search & replace across files | Project (IndexedDB primary; opt-in File System Access API / `webkitdirectory` import) | Medium | P1 |
 | XML refactoring actions † | Rename element/namespace prefix, wrap/unwrap, sort attributes | Medium | P2 |
 | Encoding / Unicode handling | UTF-8/16 detection, BOM handling, clear CJK support | Easy | P0 |
 
@@ -79,8 +81,8 @@ Priority legend: **P0** = MVP · **P1** = v1.0 · **P2** = after v1.0 · **P3** 
 | Schematron validation | Own Schematron interpreter evaluating rules directly with the XPath engine (no XSLT needed; proposed, see spike S3). Supports `let`, patterns/rules/assert/report, abstract patterns, SVRL output. XPath 3.1 binding via the XPath engine. Alternative: compile via ISO Schematron XSLT skeleton (XPath 1.0 rules only) or via SaxonJS when the plugin is enabled | Medium | P1 |
 | RELAX NG validation | Research WASM options (e.g., a libxml2 RelaxNG build or Jing port); license check required | Hard | P2 |
 | XSD 1.1 (assertions) | No mature MIT browser engine known; document limitation | Hard | OUT (revisit) |
-| XML Catalogs (OASIS) resolution | In-browser catalog resolver feeding preloaded schemas | Medium | P0 |
-| Validation scenarios (saved schema + options per file) | Saved "validation profiles" in workspace | Easy | P1 |
+| XML Catalogs (OASIS) resolution | Shared in-browser catalog & Resource Resolver feeding `ResourceBundle` | Medium | P0 |
+| Validation scenarios (saved schema + options per file) | Saved validation scenarios in Project | Easy | P1 |
 
 ### 3.3 Querying and transformation
 
@@ -91,7 +93,7 @@ Priority legend: **P0** = MVP · **P1** = v1.0 · **P2** = after v1.0 · **P3** 
 | XPath evaluator / XPath Builder | XPath panel: native XPath 1.0; XPath 3.1 via a permissively licensed JS engine (candidate: `fontoxpath` — verify license/version); results highlighted in editor and tree | Easy–Medium | P0 (1.0) / P1 (3.1) |
 | XSLT 1.0 transformation | Default engine decided by spike S2 (candidate: a WASM build of libxslt, which is MIT-licensed — verify the specific package and its license). Native `XSLTProcessor` is **not** relied upon. If no suitable engine is found, XSLT 1.0 is provided through the SaxonJS plugin only | Medium | P0 (spike) / P1 |
 | XSLT 2.0/3.0 transformation | Bundled optional **SaxonJS plugin** (off by default, §5.5). Browser build executes **compiled SEF** stylesheets; in-browser compilation of user-edited XSLT is **unconfirmed** (spike S1). Fallback: user precompiles with the free `xslt3` CLI (XX compiler) and loads the `.sef.json` | Medium | P1 (after S1) |
-| Transformation scenarios | Saved scenarios (input, stylesheet, parameters, output view) | Easy | P1 |
+| Transformation scenarios | Saved scenarios in Project (input, stylesheet, parameters, output view) | Easy | P1 |
 | XSLT/XQuery debugger (breakpoints, call stack, trace) | Lightweight alternative: trace panel (matched templates, `xsl:message`), template-coverage highlight. Full debugger deferred | Hard | P3 |
 | XQuery editing/execution | Evaluate a permissively licensed XQuery engine later | Hard | P3 |
 | Profiler | — | Hard | OUT |
@@ -143,7 +145,7 @@ Priority legend: **P0** = MVP · **P1** = v1.0 · **P2** = after v1.0 · **P3** 
 
 ## 4. Domain profiles ("Profile Packs")
 
-A profile pack is a folder under `profiles/<id>/` containing: manifest (`profile.json`), catalog, schemas (if redistributable), Schematron rules, sample documents, and a `PROVENANCE.md`.
+A profile pack is a folder under `profiles/<id>/` containing: manifest (`profile.json`), catalog, schemas (if redistributable), Schematron rules, sample documents, and a `PROVENANCE.md`. Profile packs integrate as read-only Project layers in resource resolution (`Catalog → Project files → Profile Pack → User-attached file → Unresolved`).
 
 | Profile | Standard | Notes |
 |---|---|---|
@@ -153,7 +155,7 @@ A profile pack is a folder under `profiles/<id>/` containing: manifest (`profile
 | `xliff` | XLIFF 1.2/2.x | Useful for translation workflows. |
 | `generic` | W3C XSD, XSLT, Schematron files | Editing support for schema languages themselves. |
 
-Because browsers enforce CORS, the app **cannot** reliably fetch schemas from arbitrary standards-body URLs. Strategy: (1) bundled redistributable files, (2) user upload / drag-and-drop, (3) optional fetch where the host sends CORS headers, with a clear error message otherwise.
+Because browsers enforce CORS and our v1 security posture avoids unsolicited outbound requests, **v1 performs no external network resource fetching**. Instead, schemas and catalogs are resolved from: (1) bundled redistributable Profile Packs, (2) files inside the local Project, and (3) user upload / drag-and-drop attachment mapped into a local catalog, with a clear unresolved diagnostic otherwise. Any future opt-in external fetch would require an ADR and a CSP `connect-src` update.
 
 ---
 
@@ -200,9 +202,10 @@ Because browsers enforce CORS, the app **cannot** reliably fetch schemas from ar
 │  └─ i18n-guide.md
 ├─ packages/
 │  ├─ core/                     # pure TS: parse, validate, xpath, diff, stats
+│  ├─ project/                  # pure TS: Project model, catalogs, URI/resolver, bundle (planned; created before M3)
 │  ├─ workers/                  # worker entrypoints & RPC
 │  ├─ viz/                      # visualization components
-│  └─ app/                      # Vite app (UI, i18n, routing)
+│  └─ app/                      # Vite app (UI, i18n, routing, storage adapters)
 ├─ profiles/                    # profile packs (akn, legalruleml, cvrf, xliff, ...)
 ├─ locales/
 │  ├─ en.json                   # source of truth
@@ -223,7 +226,11 @@ Because browsers enforce CORS, the app **cannot** reliably fetch schemas from ar
 | SaxonJS browser build cannot compile user-edited XSLT | Spike S1. Fallbacks: precompiled `.sef.json` workflow with the free `xslt3` CLI; or limit plugin to running SEF files. Do not reverse engineer or modify the library. |
 | Saxonica license interpretation (condition 4) or a change of the license | Accepted risk (ADR-0002) with the compliance posture in §5.5; license text hash pinned so a changed license fails the build; one-switch removal flag; prompt takedown if the licensor objects. |
 | Schema redistribution licenses | Provenance files + CI check that every bundled schema has an entry. |
-| CORS blocks remote schema fetch | Upload-first workflow, bundled catalogs, clear messaging. |
+| CORS / external schema URLs | Upload-first workflow, Project attachments, and bundled catalogs; no external network fetching in v1 (any future change requires an ADR and CSP `connect-src` update). |
+| Sync WASM/JS engines vs. async browser storage | Two-phase `ResourceBundle` built asynchronously on the main/project layer and passed as an immutable `Uint8Array` snapshot to Web Workers (ADR-0009). Dynamic runtime URIs outside the bundle emit explicit `"unresolved"` diagnostics. |
+| Untrusted imported projects / manifests | `xmlens.project.json` stores intent only (never permissions or `files[]`); manifest limits may only lower app caps; ZIP imports enforce zip-slip, zip-bomb, cycle, depth, and byte limits. |
+| Browser storage eviction & GitHub Pages origin sharing | `navigator.storage.persist()` plus export workflow (M5) mitigate IndexedDB eviction; `SECURITY.md` documents shared `<user>.github.io` origin vs. custom domain isolation. |
+| Case-insensitive filesystems & archive paths | Normalize paths (Unicode NFC, separators), treat internal project paths as case-sensitive, and warn on case-folded collisions during import. |
 | Japanese IME/CJK edge cases in editor | Dedicated e2e tests with IME composition; verify fonts and line-break behavior. |
 | Scope creep toward a "full commercial IDE clone" | Feature matrix with priorities; every P2+ item requires an issue + ADR. |
 
@@ -244,6 +251,14 @@ Because browsers enforce CORS, the app **cannot** reliably fetch schemas from ar
 - **Separation of concerns:** XPath 3.1 in the XPath panel and Schematron come from our own XPath engine, not from SaxonJS, so the default build keeps full XPath 3.1 without the plugin.
 - **Compliance posture (keeps the "application, not distribution site" reading credible):** (1) the plugin is part of the editor and used by it; there is **no page, link, README text, release asset, or package** that offers the SaxonJS file as a download or presents the site as a way to obtain it; (2) no separate repository, branch, GitHub release, or npm package of ours contains or re-publishes it; (3) it is off by default and the app is fully usable without it; (4) the directory is not advertised, listed, or documented as a download location; (5) a build flag (`XMLENS_BUNDLE_SAXONJS`, default on for the official build) removes the plugin entirely so it can be dropped in one release if the licensor objects or the license changes; (6) maintainers monitor the pinned version's license and respond promptly to any request from the licensor. Sending Saxonica a courtesy notice or question later is optional and not a gate.
 - **Forks:** the build always places the license and notice files next to the plugin, so forks deploying their own Pages site also meet the notice condition. Forks remain responsible for their own compliance.
+
+### 5.6 XML Project and Resource Resolution (proposed: ADR-0008, ADR-0009)
+
+- **Unified Project model:** Multi-file projects, OASIS XML Catalogs, and validation/transformation scenarios are unified under **Project** (`ADR-0008`, replacing the earlier "Workspace" term). File payloads are stored as `Uint8Array` bytes so non-UTF-8 encodings stay intact until decoding.
+- **Manifest & storage layering:** `xmlens.project.json` (`schemaVersion`) stores root entries, catalog pointers, scenarios, role overrides, and optional lowered limits—never a `files[]` inventory and never security permissions. Browser persistence adapters (IndexedDB primary; opt-in File System Access API and `webkitdirectory` import) reside in `packages/app`, behind a pure `ProjectFileSystem` interface in planned `packages/project` (`lib: ["ES2022"]`, acyclic dependency direction `core ← project ← workers ← app`).
+- **Two-phase `ResourceBundle` & split resolver API:** `ResourceResolver.locate()` runs synchronously and purely against in-memory catalogs (returning canonical URIs + trace), while `load()` and bundle building run asynchronously with cycle/depth/byte caps and `AbortSignal`. Workers and validation/XSLT engines receive immutable `ResourceBundle` snapshots over RPC and never touch IndexedDB or network URLs.
+- **URI identity & RFC 3986 resolution:** Open documents carry stable URIs from M1 (`untitled:1`) distinct from storage paths. Relative references resolve against `baseUri` via a self-written DOM-free RFC 3986 §5 resolver before XML Catalog lookup (`Catalog → Project → Profile Pack → User-attached → Unresolved`).
+- **Strict v1 security posture:** No external network fetching in v1, `allowExternalEntities` stays hard-off (not user-configurable), imported manifests/archives are untrusted, and browser IP/localhost SSRF blocklists are avoided as non-boundaries.
 
 
 ## 6. Internationalization (English primary, Japanese secondary)
@@ -273,12 +288,13 @@ Because browsers enforce CORS, the app **cannot** reliably fetch schemas from ar
 
 Each milestone ends with a tagged release deployed to GitHub Pages and an updated `docs/feature-matrix.md`.
 
-### S — Spikes (before or alongside M0)
+### S — Spikes (before or alongside M0 / M3)
 - **S1 (SaxonJS):** in the pinned version, (a) does the browser build expose a compile step for user-edited XSLT; (b) can it run in a sandboxed iframe/worker; (c) size and load time; (d) `.sef.json` workflow with the `xslt3` CLI as fallback.
 - **S2 (XSLT 1.0 default engine):** evaluate WASM libxslt-based packages/polyfills: license, size, maintenance, browser support, correctness on a conformance sample.
 - **S3 (Schematron):** prototype an interpreter on the XPath engine against a few real rule sets; compare with the ISO Schematron XSLT skeleton route.
-- **S4 (WASM XSD validation):** `xmllint-wasm` vs `libxml2-wasm` with a multi-file XSD and catalog.
+- **S4 (WASM XSD validation & Bundle execution, extended for M3):** compare `xmllint-wasm` vs `libxml2-wasm` with a multi-file XSD, OASIS XML Catalog, and prebuilt `ResourceBundle` (preloaded virtual FS vs synchronous hooks).
 - **S5 (large files):** CodeMirror 6 with a 5 MB document and worker-parsed outline.
+- **R1 (URI & OASIS XML Catalog 1.1 conformance, before M3):** verify self-written DOM-free RFC 3986 §5 resolver against RFC 3986 §5.4 test vectors, and verify OASIS XML Catalogs 1.1 `system`/`public`/`prefer`/`xml:base`/`rewrite*`/`nextCatalog` precedence directly from the OASIS specification text.
 - **Acceptance:** each spike ends with a short ADR (decision, evidence, license facts) before related milestone work begins.
 
 ### M0 — Foundation (≈1–2 weeks)
@@ -288,7 +304,7 @@ Each milestone ends with a tagged release deployed to GitHub Pages and an update
 - **Acceptance:** blank app deploys to Pages in both languages; CI green; license check enforced; the repository guard is active and has been verified to catch a deliberately added `saxon-test.js` on a throwaway branch.
 
 ### M1 — Editor core (≈2–3 weeks)
-- Open/save/drag-drop, tabs, UTF-8/16 + BOM, CodeMirror setup, folding, tag matching, snippets (basic).
+- Open/save/drag-drop, tabs (with stable document URI identities such as `untitled:1`), UTF-8/16 + BOM, CodeMirror setup, folding, tag matching, snippets (basic).
 - Worker-based well-formedness diagnostics with line/column; error list with click-to-jump.
 - Formatter (pretty-print) with options; XPath breadcrumb for cursor.
 - **Acceptance:** edit a 1 MB file smoothly; malformed XML shows localized diagnostics within 300 ms of pause.
@@ -299,27 +315,28 @@ Each milestone ends with a tagged release deployed to GitHub Pages and an update
 - Large-file tiers.
 - **Acceptance:** tree↔editor sync on 5 MB file; stats panel for 20 MB file via streaming; keyboard and screen-reader operable tree.
 
-### M3 — Validation (≈3 weeks)
-- XSD 1.0 validation via WASM; catalog resolver; schema upload/dependency preload; error list mapped to editor and tree.
-- DTD validation; saved validation profiles.
-- Schematron via own interpreter on the XPath engine (per spike S3) + SVRL viewer.
-- **Acceptance:** validate against a multi-file XSD (import/include) with catalog; Schematron report grouped by rule; LLM-output "repair report" export (P1 feature).
+### M3 — Validation & Project Foundation (≈3–4 weeks)
+- Create `packages/project` (planned before M3, DOM-free `ES2022`).
+- **P0:** Resource Resolver (`URI` resolution, synchronous `locate()`, `ResourceBundle` builder) and OASIS XML Catalogs 1.1 initial subset resolution; XSD 1.0 validation via WASM consuming `ResourceBundle`; error list mapped to editor and tree.
+- **P1:** Project model (`xmlens.project.json` intent manifest, byte-level `ProjectFileSystem`), IndexedDB storage adapter in `packages/app`, minimal Project Explorer, saved validation scenarios, DTD validation, Schematron via own interpreter on the XPath engine (per spike S3) + SVRL viewer.
+- **Acceptance:** validate against a multi-file XSD (import/include) with catalog via `ResourceBundle`; Project persists across reloads in IndexedDB; Schematron report grouped by rule; LLM-output "repair report" export (P1 feature).
 
 ### M4 — XPath and XSLT (≈2–3 weeks)
 - XPath panel (1.0 native, 3.1 engine), result highlighting in editor and tree.
-- XSLT scenarios using the default engine chosen in S2 (1.0); output preview (sandboxed), parameters.
+- XSLT scenarios (stored in Project, inputs supplied via `ResourceBundle`) using the default engine chosen in S2 (1.0); output preview (sandboxed), parameters.
 - SaxonJS plugin (XSLT 2.0/3.0) per §5.5 and spike S1, once S1 shows a workable execution mode (A or B). Ship disabled-by-default and follow the compliance posture in §5.5.
 - Trace panel (matched templates, `xsl:message`).
 - **Acceptance:** saved scenarios persist; XPath results navigable; XSLT output safely rendered.
 
-### M5 — Schema and structural visualization (≈3 weeks)
-- XSD diagram; dependency graph (xs/xsl import/include); reference graph with broken-link detection.
+### M5 — Schema, Project Portability, and Structural Visualization (≈3 weeks)
+- XSD diagram; dependency graph (driven by `ReferenceExtractor` / Resource Resolver over `xs`/`xsl`/`sch`/catalog references); reference graph with broken-link detection.
+- Opt-in File System Access API adapter (`packages/app`) + `<input webkitdirectory>` fallback and **P1** ZIP import/export with security hardening (zip-slip/zip-bomb/path-normalization/case-collision warnings).
 - Structural XML diff.
 - XSD-driven completion in the editor.
-- **Acceptance:** diagram renders a real-world XSD (e.g., Akoma Ntoso) responsively; diff ignores configured noise.
+- **Acceptance:** diagram renders a real-world XSD (e.g., Akoma Ntoso) responsively; diff ignores configured noise; ZIP round-trip preserves Project bytes and manifest.
 
 ### M6 — Profile packs (≈2–3 weeks)
-- `akn`, `legalruleml`, `cvrf`, `xliff`, `generic` profiles with provenance records.
+- `akn`, `legalruleml`, `cvrf`, `xliff`, `generic` profiles integrated as read-only Project layers with provenance records.
 - Profile-specific checks and outline (e.g., Akoma Ntoso hierarchy; LegalRuleML norm view as P2).
 - **Acceptance:** each profile has sample docs, passing tests, and license provenance.
 
@@ -352,6 +369,9 @@ Grid mode, refactoring actions, RELAX NG, XSD documentation generator, sample-in
 8. **Telemetry:** none (proposed). Confirm that even privacy-preserving analytics are excluded.
 9. **Default XSLT 1.0 engine** after spike S2 (WASM libxslt-based package) or SaxonJS-only.
 10. **Schematron approach** after spike S3 (own interpreter vs. XSLT skeleton).
+11. **`xmlens.project.json` manifest schema details** (`schemaVersion` 1 fields for scenarios, catalog entries, and optional lowered limits — before M3).
+12. **ZIP library candidate** for M5 import/export: license verification (`AGENTS.md` §4.1.3 / §4.1.7), bundle size, and maintenance status (currently **unverified**).
+13. **Post-v1 external network fetching:** confirm whether opt-in remote fetching is ever desired after v1; any inclusion requires a dedicated ADR and CSP `connect-src` revision (excluded from v1).
 
 ---
 
@@ -361,4 +381,4 @@ Grid mode, refactoring actions, RELAX NG, XSD documentation generator, sample-in
 2. Record the SaxonJS decision and its rationale (reading of condition 4, accepted risk, compliance posture) in ADR-0002 and `docs/legal/`.
 3. Create the repository with the MIT license, `AGENTS.md`, and this plan.
 4. Run spikes S1–S5; write ADR-0001 (stack) and ADR-0002 (SaxonJS plugin) from the results.
-5. Start M0.
+5. Start M0; before M3, review proposed `ADR-0008` / `ADR-0009` and run Spike R1 plus extended Spike S4.

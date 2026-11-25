@@ -36,3 +36,6 @@ Terms marked **Undecided (未決)** are awaiting final maintainer approval. Do n
 | Attribute             | 属性              | Agreed               | XML element attribute.                                                                                         |
 | Element               | 要素              | Agreed               | XML element node.                                                                                              |
 | Diagnostic            | 診断              | Agreed               | Structured error, warning, or informational message.                                                           |
+| Project               | プロジェクト      | **Undecided (未決)** | Domain container for XML files, catalogs, and validation/transformation scenarios (`ADR-0008`).                |
+| Resource              | リソース          | **Undecided (未決)** | External/local schema, stylesheet, catalog, or XML target resolved via `ResourceResolver` (`ADR-0009`).        |
+| Catalog               | カタログ          | **Undecided (未決)** | OASIS XML Catalog mapping URIs, system IDs, and public IDs (`ADR-0009`).                                       |

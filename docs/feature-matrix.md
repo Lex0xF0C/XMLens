@@ -30,22 +30,22 @@ Priority legend: **P0** = MVP · **P1** = v1.0 · **P2** = after v1.0 · **P3** 
 | Schema-driven content completion                                             | P1       | Not started   | Planned for M5                                                                                                                                                                                                                  |
 | Read-only XSD diagram (Schema Design view)                                   | P1       | Not started   | Planned for M5 (edit = P3)                                                                                                                                                                                                      |
 | Code templates & snippets (JSON import/export)                               | P1       | Not started   | Planned for M1                                                                                                                                                                                                                  |
-| Multi-file workspace & cross-file search/replace                             | P1       | Not started   | Planned for M1+                                                                                                                                                                                                                 |
+| Multi-file project & cross-file search/replace                               | P1       | Not started   | Planned for M3+ (Project model in M3; File System Access / ZIP in M5)                                                                                                                                                           |
 | Grid mode (nested table view)                                                | P2       | Not started   | Post-v1.0                                                                                                                                                                                                                       |
 | XML refactoring actions                                                      | P2       | Not started   | Post-v1.0                                                                                                                                                                                                                       |
 | Author mode (CSS WYSIWYG)                                                    | OUT      | Out of scope  | —                                                                                                                                                                                                                               |
 
 ## 3. Validation (`IMPLEMENTATION_PLAN.md` §3.2)
 
-| Capability                               | Priority | Status       | Notes                            |
-| ---------------------------------------- | -------- | ------------ | -------------------------------- |
-| XML Schema (XSD 1.0) validation via WASM | P0       | Not started  | Pending Spike S4, planned for M3 |
-| OASIS XML Catalogs resolution            | P0       | Not started  | Planned for M3                   |
-| DTD validation via WASM                  | P1       | Not started  | Planned for M3                   |
-| Schematron validation & SVRL viewer      | P1       | Not started  | Pending Spike S3, planned for M3 |
-| Saved validation profiles                | P1       | Not started  | Planned for M3                   |
-| RELAX NG validation                      | P2       | Not started  | Post-v1.0                        |
-| XSD 1.1 assertions                       | OUT      | Out of scope | Document limitation in UI        |
+| Capability                               | Priority | Status       | Notes                                  |
+| ---------------------------------------- | -------- | ------------ | -------------------------------------- |
+| XML Schema (XSD 1.0) validation via WASM | P0       | Not started  | Pending Spike S4, planned for M3       |
+| OASIS XML Catalogs resolution            | P0       | Not started  | Planned for M3 (pending Spike R1 & S4) |
+| DTD validation via WASM                  | P1       | Not started  | Planned for M3                         |
+| Schematron validation & SVRL viewer      | P1       | Not started  | Pending Spike S3, planned for M3       |
+| Saved validation scenarios (Project)     | P1       | Not started  | Planned for M3                         |
+| RELAX NG validation                      | P2       | Not started  | Post-v1.0                              |
+| XSD 1.1 assertions                       | OUT      | Out of scope | Document limitation in UI              |
 
 ## 4. Querying and Transformation (`IMPLEMENTATION_PLAN.md` §3.3)
 
@@ -82,3 +82,13 @@ Priority legend: **P0** = MVP · **P1** = v1.0 · **P2** = after v1.0 · **P3** 
 | Schema-to-prompt helper                                                     | P2       | Not started  | Post-v1.0      |
 | CSV import / JSON Schema (CSAF 2.x) / bilingual alignment / XSLT docs       | P3       | Not started  | Stretch        |
 | Git/SVN clients, WebDAV, SharePoint, XML databases                          | OUT      | Out of scope | —              |
+
+## 7. Project & Resource Resolution (`ADR-0008`, `ADR-0009`)
+
+| Capability                                                                       | Priority | Status       | Notes                                                                    |
+| -------------------------------------------------------------------------------- | -------- | ------------ | ------------------------------------------------------------------------ |
+| OASIS XML Catalogs resolution (`public`/`system`/`uri`/`rewrite*`/`nextCatalog`) | P0       | Not started  | Planned for M3 (unchanged; see §3 & Spike R1)                            |
+| Resource Resolver (RFC 3986 URI resolution, `locate()`, `ResourceBundle`)        | P0       | Not started  | Planned for M3 (`ADR-0009`, Spike R1 / S4)                               |
+| Project model (`xmlens.project.json`), scenarios, IndexedDB & Project Explorer   | P1       | Not started  | Planned for M3 (`ADR-0008`; storage adapter in `packages/app`)           |
+| File System Access API & ZIP import/export                                       | P1       | Not started  | Planned for M5 (`ADR-0008`, `ADR-0009`; `webkitdirectory` import paired) |
+| External network resource fetching                                               | OUT      | Out of scope | Excluded in v1 (`ADR-0009`; upload or local project attachment instead)  |

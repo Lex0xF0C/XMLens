@@ -23,10 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `docs/adr/0005-codemirror-and-csp.md` (accepted in principle; spike gated on `ADR-0006`)
   - `docs/adr/0006-e2e-and-a11y-tooling.md` (proposed)
   - `docs/adr/0007-dev-server-csp-and-styles.md` (proposed)
+  - `docs/adr/0008-xml-project-model-and-packages.md` (proposed)
+  - `docs/adr/0009-resource-resolution-catalogs-and-security.md` (proposed)
 - Pure TypeScript XML well-formedness and namespace diagnostics (`checkWellFormedness`) in `@xmlens/core` powered by `saxes@6.0.0` (`ISC`) and `xmlchars@2.2.0` (`MIT`), with structured `Diagnostic` mapping (`diagnostics.xml.*` keys in `en.json` and `ja.json`), clamped UTF-16 `offset` / 1-based Unicode `column`, internal DTD entity-expansion warnings (`XML_DTD_ENTITY_EXPANSION_DISABLED`), external DTD non-fetch warnings (`XML_EXTERNAL_DTD_IGNORED`), W3C XML 1.0 §4.1 external/parameter-entity warning handling (`XML_UNDECLARED_EXTERNAL_ENTITY`), and unit/fixture tests (`tests/fixtures/`).
 - Dedicated Web Worker package (`@xmlens/workers`) with versioned RPC protocol, request-id matching, worker termination/respawn cancellation and timeouts, unit tests (`packages/workers/src/workers.test.ts`), and `tsc -p packages/workers/tsconfig.json --noEmit` verification under `lib: ["ES2022", "WebWorker"]`.
 - Runtime third-party license notice generator and CI check (`scripts/generate-notices.mjs`, `npm run notices:generate`, `npm run notices:check`), generating `THIRD_PARTY_NOTICES.md` and same-origin `packages/app/public/THIRD_PARTY_NOTICES.md` (`dist/THIRD_PARTY_NOTICES.md` linked from the About dialog) for bundled runtime dependencies (`saxes@6.0.0`, `xmlchars@2.2.0`), with unit tests (`scripts/generate-notices.test.mjs`).
-- Project documentation and community drafts: `LICENSE` (MIT), `README.md`, `README.ja.md`, `THIRD_PARTY_NOTICES.md`, `docs/feature-matrix.md`, `docs/legal/guard-verification.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SECURITY.md`.
+- Project documentation and community drafts: `LICENSE` (MIT), `README.md`, `README.ja.md`, `THIRD_PARTY_NOTICES.md`, `docs/feature-matrix.md`, `docs/legal/guard-verification.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `SECURITY.md` (including XML Project and Resource Resolution architecture documentation across `docs/IMPLEMENTATION_PLAN.md`, `AGENTS.md`, `docs/feature-matrix.md`, `docs/i18n-guide.md`, and `SECURITY.md`).
 
 ### Changed
 

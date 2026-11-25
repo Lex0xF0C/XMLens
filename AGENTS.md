@@ -19,7 +19,7 @@ Read `docs/IMPLEMENTATION_PLAN.md` first. It is the source of truth for scope, p
 
 ## 1. Project at a glance
 
-- **What:** A static web app (no backend) to edit, validate, query, transform, compare, and visualize XML. Aimed at OSS communities and individuals who cannot afford commercial XML editors. First-class domains: LegalDocML / Akoma Ntoso, LegalRuleML, CVRF (XML predecessor of CSAF), XLIFF, plus generic XSD/XSLT/Schematron.
+- **What:** A static web app (no backend) to edit, validate, query, transform, compare, and visualize XML. Aimed at OSS communities and individuals who cannot afford commercial XML editors. First-class domains: LegalDocML / Akoma Ntoso, LegalRuleML, CVRF (XML predecessor of CSAF), XLIFF, plus generic XSD/XSLT/Schematron. From M3 onward, multi-file work, catalogs, and validation/transformation scenarios are organized into **XML Projects**.
 - **Languages (human):** English is primary. Japanese is secondary and must stay complete.
 - **License:** MIT.
 - **Hosting:** GitHub Pages, possibly under a sub-path (e.g. `/xmlens/`).
@@ -54,9 +54,10 @@ Before declaring any task done, run `npm run check` (and `npm run test:e2e` if U
 
 ```
 packages/core/     Pure TypeScript. No DOM, no UI. Parse, validate, xpath, diff, stats.
+packages/project/  Pure TypeScript. No DOM (planned; created before M3). Project model, catalogs, URI/resolver, ResourceBundle.
 packages/workers/  Web Worker entrypoints and typed RPC layer.
 packages/viz/      Visualization components (tree, treemap, graphs).
-packages/app/      Vite app: UI, routing, i18n wiring.
+packages/app/      Vite app: UI, routing, i18n wiring, browser storage adapters (IndexedDB, FSA).
 profiles/<id>/     Profile packs: profile.json, catalog, schemas, Schematron, samples, PROVENANCE.md.
 plugins/          Metadata ONLY (saxonjs/pinned.json, saxonjs/APPROVED_LICENSE.sha256). Plugin binaries must never exist in git or in the AI Studio workspace.
 locales/           en.json (source of truth), ja.json.
@@ -64,7 +65,7 @@ docs/              Plan, ADRs (docs/adr/), feature matrix, i18n guide.
 tests/fixtures/    Test data. Every fixture needs a known license/origin.
 ```
 
-Keep `packages/core` free of DOM and browser globals so it can later power a CLI or editor extension.
+Keep `packages/core` and planned `packages/project` free of DOM and browser globals so they can later power a CLI or editor extension. Browser persistence adapters (IndexedDB, File System Access API, `webkitdirectory` import) live in `packages/app`.
 
 ## 4. Hard rules (do not violate)
 
@@ -96,6 +97,11 @@ Keep `packages/core` free of DOM and browser globals so it can later power a CLI
 5. XML input is untrusted. Never fetch external entities or DTDs. Enforce limits for entity expansion, document size tiers, memory, and worker timeouts.
 6. Run heavy work (parse, validate, XPath, XSLT, diff of large docs) in Web Workers with cancellation and timeouts. Do not block the main thread.
 7. Never commit secrets, tokens, or personal data. Test fixtures must contain no real personal or confidential content.
+8. All cross-file and external resource access in validation, XPath, XSLT, Schematron, and visualization goes through the shared Resource Resolver / `ResourceBundle` layer (`ADR-0009`). Engines and Workers never open IndexedDB, File System Access handles, or network URLs directly.
+9. No external network resource fetching in v1. Any future change requires an ADR and a CSP `connect-src` revision (and must not rely on browser-JS localhost/IP string blocklists as an SSRF boundary).
+10. Imported project manifests (`xmlens.project.json`) and archives are untrusted: manifests store intent only, never security permissions, and may only lower (never raise) application resource limits.
+11. Archive/directory imports (M3/M5) must enforce path normalization (Unicode NFC, separators), zip-slip and zip-bomb defenses, cycle/depth/byte caps, and case-collision warnings on case-folded duplicates.
+12. `allowExternalEntities` stays hard-off and is never exposed as a user setting.
 
 ### 4.3 Internationalization (English primary, Japanese secondary)
 1. **No user-visible string literals in components.** Use message keys from `locales/en.json`. Keys are semantic (`validation.error.line`), not sentence text.
@@ -129,6 +135,9 @@ Keep `packages/core` free of DOM and browser globals so it can later power a CLI
 - Comments explain *why*, not *what*. Public functions in `core` get TSDoc.
 - Prefer standard Web APIs over libraries when quality is sufficient.
 - Bundle-size discipline: lazy-load large modules (validation WASM, graph layout, optional engines). Check the size impact of every dependency.
+- Store project file contents as raw bytes (`Uint8Array`) in `ProjectFileSystem`, decoding at the editor/engine boundary so declared XML encodings remain intact (`ADR-0008`).
+- Keep `ResourceResolver.locate()` synchronous and pure (against preloaded catalogs, returning canonical URIs and trace) and `load()` / `ResourceBundle` building asynchronous (`ADR-0009`). Workers receive immutable `ResourceBundle` snapshots over RPC and never touch storage.
+- Planned `packages/project` must compile DOM-free (`lib: ["ES2022"]` + ESLint `no-restricted-globals`, including `indexedDB`) and use a self-written RFC 3986 §5 URI resolver.
 
 ## 6. Testing requirements
 
@@ -160,6 +169,9 @@ Keep `packages/core` free of DOM and browser globals so it can later power a CLI
 - Akoma Ntoso: `eId`, `wId`, `GUID`, and `href`/`refersTo` references are central to the reference graph and broken-link checks.
 - Namespaces matter everywhere: always handle prefix ≠ namespace URI correctly in XPath, completion, and the tree view.
 - Whitespace is significant in mixed content. Formatter and diff must be `xml:space`-aware and offer clear options.
+- Document URI identity (e.g., `untitled:1` assigned from M1 before a file belongs to a Project) is distinct from filesystem/IndexedDB paths. Always resolve relative references against `baseUri` per RFC 3986 §5 before consulting an XML Catalog.
+- Initial OASIS XML Catalogs 1.1 scope (`M3`, `P0`) covers `public`, `system`, `uri`, `rewriteSystem`, `rewriteURI`, `nextCatalog`, `group`, `xml:base`, and `prefer`; `delegate*` and `*Suffix` are deferred (`ADR-0009`).
+- Domain-specific rules (Akoma Ntoso `eId`/`wId`, LegalRuleML, CVRF, XLIFF) stay outside the generic Project model in Profile Packs and pluggable extractors.
 
 ## 9. Git, CI, and deployment
 
@@ -182,6 +194,7 @@ A change is done only when:
 - [ ] Docs and feature matrix updated (en + ja where user-facing)
 - [ ] `CHANGELOG.md` updated under `[Unreleased]` for any user-visible, dependency, security, CSP, or license-policy change
 - [ ] Risks, limitations, and unverified assumptions are stated in the PR description
+- [ ] No engine directly accesses IndexedDB, file storage, or external network URLs (uses Resource Resolver / `ResourceBundle`)
 
 ## 11. Ask before doing any of the following
 
@@ -193,3 +206,6 @@ A change is done only when:
 - Changing the UI framework, build tool, or repository layout
 - Removing a feature, test, or translation key
 - Renaming the project or changing the license
+- Changing the `xmlens.project.json` schema (`schemaVersion`) after v1
+- Adding a ZIP library dependency (verify license, maintenance, and bundle size first)
+- Enabling external network resource fetching or loosening CSP `connect-src`
