@@ -94,6 +94,15 @@ function hasMatchingBom(
   return detectedEncoding === activeNorm;
 }
 
+const sharedUtf8Encoder = new TextEncoder();
+
+/**
+ * Returns the exact UTF-8 byte length of a JavaScript string using Web Platform `TextEncoder`.
+ */
+export function utf8ByteLength(text: string): number {
+  return sharedUtf8Encoder.encode(text).byteLength;
+}
+
 /**
  * Decodes raw XML file bytes using XML 1.0 Appendix F detection (unless overridden) and
  * `TextDecoder(..., { fatal: true })`. DOM-free so it can be unit-tested in Node.
@@ -104,6 +113,9 @@ export function decodeXmlBytes(bytes: Uint8Array, override: string = 'auto'): De
   if (override === 'auto') {
     const hasBom = detection.bomLength > 0;
     if (!detection.supported) {
+      const isDeclarationMismatch = detection.diagnostics.some(
+        (d) => d.code === 'XML_ENCODING_DECLARATION_MISMATCH',
+      );
       const firstDiagDetail = detection.diagnostics[0]?.params?.detail;
       const detail =
         typeof firstDiagDetail === 'string'
@@ -111,7 +123,7 @@ export function decodeXmlBytes(bytes: Uint8Array, override: string = 'auto'): De
           : `Unsupported encoding: ${detection.encoding}`;
       return {
         ok: false,
-        failureReason: 'unsupported',
+        failureReason: isDeclarationMismatch ? 'decode-error' : 'unsupported',
         encoding: detection.encoding,
         hasBom,
         source: detection.source,
@@ -243,27 +255,33 @@ export type LoadAndDecodeFileResult =
 
 /**
  * Shared file-opening pipeline used by both the file picker and drag-and-drop:
- * checks byte size before reading, reads `ArrayBuffer`, re-checks byte length, and decodes.
+ * enforces a 3x raw-byte safety cap before/after reading to protect memory, decodes bytes,
+ * and enforces `maxBytes` against the decoded UTF-8 byte length.
  */
 export async function loadAndDecodeXmlFile(
   file: BinaryFileLike,
   maxBytes: number,
   override: string = 'auto',
 ): Promise<LoadAndDecodeFileResult> {
-  if (file.size > maxBytes) {
+  const maxRawBytes = maxBytes * 3;
+  if (file.size > maxRawBytes) {
     return { status: 'too-large' };
   }
 
   try {
     const buffer = await file.arrayBuffer();
     const bytes = new Uint8Array(buffer);
-    if (bytes.byteLength > maxBytes) {
+    if (bytes.byteLength > maxRawBytes) {
+      return { status: 'too-large' };
+    }
+    const decoded = decodeXmlBytes(bytes, override);
+    if (decoded.ok && utf8ByteLength(decoded.text) > maxBytes) {
       return { status: 'too-large' };
     }
     return {
       status: 'decoded',
       bytes,
-      decoded: decodeXmlBytes(bytes, override),
+      decoded,
     };
   } catch (err: unknown) {
     const detail = err instanceof Error ? err.message : String(err);

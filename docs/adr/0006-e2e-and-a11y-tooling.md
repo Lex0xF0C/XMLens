@@ -89,6 +89,15 @@ When automated browser execution is unavailable in AI Studio (or before `e2e` CI
 4. **Keyboard & Accessibility:**
    - Tab through the skip link, toolbar buttons, selects, editor, diagnostic list buttons, and raw-detail `<details>` disclosures; verify visible focus rings (`2px`) everywhere.
    - Open **About** (`XMLens について`), press `Escape` or **Close**, and confirm focus returns to the **About** toolbar button.
+5. **Save & Encoding Manual Verification (M1 Stage 3(b)):**
+   - **UTF-8 (with & without BOM):** Save both with and without BOM, reopen the downloaded file in XMLens, and confirm status bar shows `UTF-8` vs `UTF-8 (BOM)` with intact CJK / emoji / `𠮷` characters.
+   - **UTF-16LE / UTF-16BE:** Select `UTF-16LE` and `UTF-16BE` in **Save as...**; confirm the BOM checkbox locks checked & disabled, save files with CJK/surrogate-pair content, and verify XMLens reopens them cleanly.
+   - **CRLF vs LF:** Open a `CRLF` XML file, open **Save as...**, confirm Line endings defaults to `CRLF`, save, and verify `\r\n` bytes in the output file (e.g., hex viewer or line-ending inspector).
+   - **XML declaration rewrite:** Open a `Shift_JIS` (or `UTF-8`) file containing `<?xml version="1.0" encoding="..."?>` plus `<?xml` text inside an element body, switch target encoding, confirm the "Update XML declaration" checkbox appears (checked by default), save, and verify **only** the leading XML declaration changed.
+   - **Shift_JIS -> UTF-8 save:** Open a `Shift_JIS` file, click **Save as...**, verify the legacy-encoding UTF-8 recommendation notice is shown, save as `UTF-8`, and reopen cleanly.
+   - **ASCII + `encoding="UTF-16"` mismatch:** Open an ASCII/UTF-8 file declaring `encoding="UTF-16"` without BOM; confirm `Auto-detect` fails with the mismatch diagnostic, and switching File encoding to `UTF-8` recovers it.
+   - **Blob download & CSP:** Confirm `<a download>` downloads complete in Edge/Chrome and Firefox with **zero** `securitypolicyviolation` or Console CSP errors under `npm run preview`.
+   - **Save dialog keyboard flow:** Open **Save as...**, confirm focus lands on the filename input, Tab through all controls, and press `Escape` or **Cancel** to confirm focus returns to the **Save as...** button.
 
 ## Decision Requested From Maintainer
 

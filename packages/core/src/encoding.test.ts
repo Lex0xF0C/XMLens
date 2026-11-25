@@ -259,4 +259,23 @@ describe('detectXmlEncoding', () => {
       params: { detected: 'UTF-8', declared: 'Shift_JIS' },
     });
   });
+
+  it('flags ASCII-compatible <?xm bytes declaring UTF-16/LE/BE without BOM or pattern as XML_ENCODING_DECLARATION_MISMATCH', () => {
+    for (const label of ['UTF-16', 'utf-16le', 'UTF-16BE']) {
+      const bytes = asciiBytes(`<?xml version="1.0" encoding="${label}"?><r/>`);
+      const res = detectXmlEncoding(bytes);
+      expect(res.supported).toBe(false);
+      expect(res.source).toBe('declaration');
+      expect(res.bomLength).toBe(0);
+      expect(res.declaredEncoding).toBe(label);
+      expect(res.diagnostics).toHaveLength(1);
+      expect(res.diagnostics[0]).toMatchObject({
+        severity: 'error',
+        code: 'XML_ENCODING_DECLARATION_MISMATCH',
+        messageKey: 'diagnostics.encoding.declarationMismatch',
+        source: 'core',
+        params: { declared: label },
+      });
+    }
+  });
 });

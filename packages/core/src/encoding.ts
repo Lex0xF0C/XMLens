@@ -11,7 +11,7 @@ export interface XmlEncodingDetectionResult {
   readonly bomLength: 0 | 2 | 3 | 4;
   /** Exact encoding string declared in the leading XML declaration, if present. */
   readonly declaredEncoding?: string;
-  /** False when the encoding (e.g. UTF-32 / UCS-4 / EBCDIC) is unsupported by browser decoders. */
+  /** False when the encoding is unsupported or contradicts the file header byte pattern. */
   readonly supported: boolean;
   /** Structured diagnostics emitted during encoding detection. */
   readonly diagnostics: readonly Diagnostic[];
@@ -223,6 +223,20 @@ function createBomConflictDiagnostic(detected: string, declared: string): Diagno
   };
 }
 
+function createDeclarationMismatchDiagnostic(declared: string): Diagnostic {
+  return {
+    severity: 'error',
+    code: 'XML_ENCODING_DECLARATION_MISMATCH',
+    messageKey: 'diagnostics.encoding.declarationMismatch',
+    params: {
+      declared,
+      detail: `XML declaration specifies "${declared}", but the file begins with ASCII-compatible "<?xm" bytes without a UTF-16 BOM or byte-order pattern.`,
+    },
+    range: { line: 1, column: 1, offset: 0 },
+    source: 'core',
+  };
+}
+
 function bytesMatch4(bytes: Uint8Array, b0: number, b1: number, b2: number, b3: number): boolean {
   return (
     bytes.length >= 4 && bytes[0] === b0 && bytes[1] === b1 && bytes[2] === b2 && bytes[3] === b3
@@ -398,6 +412,16 @@ export function detectXmlEncoding(bytes: Uint8Array): XmlEncodingDetectionResult
     const declaredEncoding = extractDeclaredEncodingFromHeader(header);
     if (declaredEncoding !== undefined) {
       const normalized = normalizeXmlEncodingLabel(declaredEncoding);
+      if (normalized === 'UTF-16' || normalized === 'UTF-16LE' || normalized === 'UTF-16BE') {
+        return {
+          encoding: normalized,
+          source: 'declaration',
+          bomLength: 0,
+          declaredEncoding,
+          supported: false,
+          diagnostics: [createDeclarationMismatchDiagnostic(declaredEncoding)],
+        };
+      }
       if (isUnsupportedNormalizedEncoding(normalized)) {
         return {
           encoding: normalized,

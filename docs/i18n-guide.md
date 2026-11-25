@@ -40,3 +40,5 @@ Terms marked **Undecided (未決)** are awaiting final maintainer approval. Do n
 | Resource              | リソース                          | **Undecided (未決)** | External/local schema, stylesheet, catalog, or XML target resolved via `ResourceResolver` (`ADR-0009`).        |
 | Catalog               | カタログ                          | **Undecided (未決)** | OASIS XML Catalog mapping URIs, system IDs, and public IDs (`ADR-0009`).                                       |
 | Encoding              | 文字コード / 文字エンコーディング | **Undecided (未決)** | Character encoding label (`locales/ja.json` provisionally uses 「文字コード」 pending maintainer decision).    |
+| Line ending           | 改行コード                        | **Undecided (未決)** | Line-break convention (`LF` / `CRLF`); provisional translation pending maintainer review (`needs-ja-review`).  |
+| BOM                   | BOM（バイトオーダーマーク）       | **Undecided (未決)** | Unicode Byte Order Mark option in Save dialog; provisional translation pending review (`needs-ja-review`).     |

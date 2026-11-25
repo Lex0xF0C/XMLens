@@ -24,9 +24,10 @@ XMLens also keeps `packages/core` strictly DOM-free (`"lib": ["ES2022"]`, `eslin
    - `packages/core` (`encoding.ts`) performs **pure byte inspection and classification only** and never calls `TextDecoder` or browser APIs, keeping `@xmlens/core` portable across `ES2022` workers, Node, and future CLIs.
    - `packages/app` (`decodeXml.ts`) consumes `detectXmlEncoding` and performs actual decoding via `new TextDecoder(label, { fatal: true })`, preserving `hasBom = bomLength > 0` from detection because `TextDecoder` strips matching BOMs.
 
-3. **Unsupported Encodings, Fatal Decode Errors, and Overrides:**
+3. **Unsupported Encodings, Declaration Mismatches, Fatal Decode Errors, and Overrides:**
    - Unsupported encodings (`UTF-32BE`, `UTF-32LE`, `UCS-4`, `EBCDIC`) are **not** passed to `TextDecoder`; `decodeXmlBytes` returns a structured failure (`failureReason: 'unsupported'`) with an error `Diagnostic`.
-   - `TextDecoder(..., { fatal: true })` failures do not silently insert replacement characters (`U+FFFD`). Instead, `main.ts` skips the worker well-formedness check, preserves the raw `Uint8Array` bytes (up to 1 MB) in memory, and displays an error state prompting the user to select another encoding override from the toolbar (`auto`, `UTF-8`, `UTF-16LE`, `UTF-16BE`, `Shift_JIS`, `EUC-JP`, `ISO-2022-JP`, `windows-1252`).
+   - **M1 stage 3(b) addition:** When an ASCII-compatible `<?xm` header declares `UTF-16`, `UTF-16LE`, or `UTF-16BE` without a UTF-16 BOM or byte-order pattern, `detectXmlEncoding` flags `supported: false` with `XML_ENCODING_DECLARATION_MISMATCH` (`severity: 'error'`, `source: 'core'`) so `auto` mode refuses to decode (preventing arbitrary even-length mojibake), while manual encoding override in the toolbar continues to bypass auto-detection.
+   - `TextDecoder(..., { fatal: true })` failures do not silently insert replacement characters (`U+FFFD`). Instead, `main.ts` skips the worker well-formedness check, preserves the raw `Uint8Array` bytes (up to the safety cap) in memory, and displays an error state prompting the user to select another encoding override from the toolbar (`auto`, `UTF-8`, `UTF-16LE`, `UTF-16BE`, `Shift_JIS`, `EUC-JP`, `ISO-2022-JP`, `windows-1252`).
    - Unknown encoding labels (`RangeError` from `new TextDecoder(...)`) emit a `warning` `Diagnostic` (`XML_UNKNOWN_ENCODING_FALLBACK`) and attempt `UTF-8` with `fatal: true`.
 
 4. **Assumed Encoding Forwarding to Worker Checks:**
@@ -42,9 +43,9 @@ XMLens also keeps `packages/core` strictly DOM-free (`"lib": ["ES2022"]`, `eslin
   - Opening UTF-8 (with/without BOM), UTF-16LE/BE (with/without BOM), Shift_JIS, EUC-JP, ISO-2022-JP, and windows-1252 XML files decodes accurately without mojibake, preserves BOM awareness in the status bar, and accurately drives `assumedEncoding` in worker well-formedness checks.
   - Zero new npm dependencies and zero relaxation of CSP or `packages/core` DOM-free rules.
 - **Negative / Limitations:**
-  - Only file **opening/decoding** is implemented in M1 stage 2; **saving/exporting** in original or non-UTF-8 encodings is deferred (browsers' native `TextEncoder` only encodes UTF-8).
+  - Export/saving in non-Unicode legacy encodings (`Shift_JIS`, `EUC-JP`, `ISO-2022-JP`, `windows-1252`) is not supported; saving is covered in `ADR-0011` (`UTF-8`, `UTF-16LE`, `UTF-16BE`).
   - Real-browser verification across Chromium, Firefox, and WebKit has not been run in AI Studio (**unverified**).
-  - **Asymmetric 1 MB preview size check:** File loading enforces the 1 MB (`1,048,576`-byte) cap against raw file bytes (`file.size` / `bytes.byteLength`), whereas `runWorkerCheck` re-checks the decoded string as UTF-8 bytes via `TextEncoder`; a non-UTF-8 file under 1 MB (e.g., 700,007 Shift_JIS bytes) can expand past 1 MB in UTF-8 (1,050,007 bytes) and trigger `preview.tooLarge` after decoding.
+  - **Asymmetric 1 MB preview size check (Resolved in M1 stage 3(b)):** Previously, file loading checked raw bytes against 1 MB while `runWorkerCheck` checked decoded UTF-8 bytes. Both `loadAndDecodeXmlFile` and `runWorkerCheck` now enforce the 1 MB (`1,048,576`-byte) limit against decoded UTF-8 byte length via shared `utf8ByteLength`, with `loadAndDecodeXmlFile` enforcing a `3x` raw-byte safety cap before/after reading `arrayBuffer()` to protect memory from huge files.
 
 ## Alternatives Considered
 

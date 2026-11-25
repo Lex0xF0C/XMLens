@@ -458,6 +458,96 @@ textarea {
   justify-content: flex-end;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+.hidden-download-link {
+  display: none;
+}
+
+.save-dialog {
+  max-width: 460px;
+}
+
+.save-dialog-body {
+  padding: 10px 12px;
+  display: grid;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.save-field {
+  display: grid;
+  gap: 3px;
+}
+
+.save-field-label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.save-input {
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  color: inherit;
+}
+
+.save-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.save-checkbox-row input:disabled + label {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.save-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.save-notice {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--warning-border);
+  border-radius: 2px;
+  background: var(--bg-pane-header);
+  color: var(--warning-text);
+  font-size: 12px;
+}
+
+.save-decl-box {
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  background: var(--bg-pane-header);
+  display: grid;
+  gap: 4px;
+}
+
+.save-error {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--error-border);
+  border-radius: 2px;
+  background: var(--bg-surface);
+  color: var(--error-text);
+  font-size: 12px;
+}
+
+.save-footer {
+  gap: 6px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     scroll-behavior: auto !important;

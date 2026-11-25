@@ -57,3 +57,19 @@ export {
   type EncodingDetectionSource,
   type XmlEncodingDetectionResult,
 } from './encoding';
+
+export {
+  convertLineEndings,
+  detectLineEnding,
+  encodeUtf16Bytes,
+  findLoneSurrogate,
+  formatCodeUnitHex,
+  inspectXmlDeclarationForSave,
+  rewriteLeadingXmlDeclarationEncoding,
+  type EncodeUtf16Options,
+  type EncodeUtf16Result,
+  type LineEnding,
+  type LoneSurrogateLocation,
+  type SaveEncoding,
+  type XmlDeclarationSaveCheck,
+} from './xmlExport';

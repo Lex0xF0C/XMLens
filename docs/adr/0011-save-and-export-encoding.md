@@ -1,6 +1,6 @@
 # ADR-0011: Save and Export Encoding, BOM, Line Ending, and Browser API Strategy
 
-- **Status:** Proposed (awaiting maintainer approval — no save/export code implemented yet)
+- **Status:** Accepted (implemented in M1 stage 3(b))
 - **Date:** 2026-11-25
 
 ## Context
@@ -46,12 +46,37 @@ Web platform encoding APIs are asymmetric:
 - **Current behavior (M1 stage 2):** Once the user edits `textarea` (`input` event), `isModifiedSinceLoad` becomes `true` and `lastAssumedEncoding` resets to `undefined` because the buffer is now an in-memory JS string rather than raw file bytes. As a result, a document with `<?xml version="1.0" encoding="Shift_JIS"?>` begins emitting `XML_ENCODING_DECLARATION_NOTE` (`info`: declared `"Shift_JIS"` vs assumed `UTF-8`) after the first edit.
 - **Design point:** Is emitting that `info` diagnostic after editing desired (accurately reminding the user that live edits in memory are UTF-8/UTF-16 and cannot yet be saved back as Shift_JIS), or should target-encoding metadata remain pinned to the tab until save-time conversion?
 
-## Decision Requested From Maintainer
+## Decision (Accepted in M1 Stage 3(b))
 
-Before implementing M1 save/export, maintainer approval is requested on:
+1. **Output encodings (`UTF-8`, `UTF-16LE`, `UTF-16BE` only):**
+   - Native export supports **UTF-8** (`TextEncoder`) and self-implemented **UTF-16LE / UTF-16BE** (`encodeUtf16Bytes` in `@xmlens/core`).
+   - Exporting in non-Unicode legacy encodings (`Shift_JIS`, `EUC-JP`, `ISO-2022-JP`, `windows-1252`) is explicitly unsupported without adding third-party mapping tables; documents opened in those encodings default to `UTF-8` export with an explanatory notice inside the Save dialog. No encoding-table npm dependencies are added.
 
-1. **Output encoding strategy (Recommended: Option 3 + Option 2 confirmation flow for legacy encodings):** Support **UTF-8** and **UTF-16LE/BE** natively (zero dependencies), and for documents opened from Shift_JIS / EUC-JP / ISO-2022-JP / windows-1252, offer saving as UTF-8 with an explicit prompt to update `encoding="..."` to `"UTF-8"` (never rewriting silently, and never adding unverified encoding-table packages without a separate dependency review ADR).
-2. **Save transport:** Standardize on `<a download>` + `Blob` as the baseline cross-browser export mechanism first, with optional progressive enhancement to `showSaveFilePicker()` in Chromium (`M1`/`M5`).
-3. **BOM default:** Confirm whether to preserve detected BOM on save by default (`UTF-8 BOM` / `UTF-16 BOM`) with an explicit user control.
-4. **Line endings:** Confirm whether `LF` is acceptable for initial M1 save or if raw-byte `CRLF`/`LF` detection & preservation on save is required.
-5. **Post-edit `XML_ENCODING_DECLARATION_NOTE`:** Confirm keeping the current behavior (show `info` note once edited in memory) or suppressing/adapting it when a target save encoding is selected.
+2. **Leading XML declaration (`XMLDecl`) confirmation & rewrite:**
+   - When the document has a leading `<?xml ... ?>` declaration at index 0 whose `encoding` conflicts with the chosen output encoding (or lacks an `encoding` attribute when exporting as `UTF-16LE` / `UTF-16BE`), the Save dialog presents an explicit confirmation checkbox (checked by default) to update the leading declaration to the target encoding.
+   - Silent/unconfirmed declaration rewriting is forbidden. Documents without a leading XML declaration, declarations without an `encoding` attribute when saving as `UTF-8`, and `<?xml`-like strings inside the document body are never modified.
+   - Exporting a copy via `<a download>` leaves the in-memory `<textarea>` buffer unchanged so native browser undo history is preserved.
+
+3. **Save transport (`<a download>` + `Blob` only):**
+   - Uses `<a download>` + `Blob` (`URL.createObjectURL` with deterministic `URL.revokeObjectURL` cleanup).
+   - `window.showSaveFilePicker` is deferred to M5 (`ADR-0008`).
+   - Strict CSP in `packages/app/index.html` remains completely unchanged; live cross-browser verification that `blob:` downloads emit zero CSP violations remains **unverified** in AI Studio and is included in `ADR-0006`'s manual checklist.
+
+4. **Byte Order Mark (BOM) handling:**
+   - Defaults to preserving the loaded document's BOM status (`loadedEncodingInfo.hasBom`) for UTF-8 files (off for new/sample buffers).
+   - For `UTF-16LE` and `UTF-16BE`, BOM is mandatory (the checkbox is locked checked and disabled) because BOM-less UTF-16 without a leading `<?xml` declaration cannot be autodetected reliably.
+
+5. **Line ending (`LF` vs `CRLF`) handling:**
+   - Dominant line ending (`LF` or `CRLF`) is detected by `@xmlens/core` `detectLineEnding` from decoded text _before_ assigning into `<textarea>` (which normalizes `\r\n` to `\n`), defaulting to `LF` for new/sample documents.
+   - The Save dialog lets the user select `LF` or `CRLF` (defaulting to the detected value) and normalizes line breaks through `\n` before conversion (`convertLineEndings`).
+
+6. **Post-edit `XML_ENCODING_DECLARATION_NOTE`:**
+   - Current behavior is retained: once a legacy-encoded document is edited in memory, `XML_ENCODING_DECLARATION_NOTE` (`info`) reminds the user that in-memory text is processed as UTF-8/UTF-16 rather than the declared legacy encoding until explicitly exported.
+
+7. **Lone UTF-16 surrogate validation:**
+   - Before encoding, `findLoneSurrogate` in `@xmlens/core` scans the text for unpaired UTF-16 surrogates (`0xD800..0xDFFF`). If any lone surrogate is present, saving is refused with an inline `role="alert"` error reporting line, column, offset, and code unit (`U+XXXX`), rather than relying on `TextEncoder`'s silent `U+FFFD` replacement.
+
+## Consequences
+
+- **Positive:** Zero new npm dependencies, strict CSP preserved, `packages/core` remains DOM-free (`ES2022`), and users can safely export valid UTF-8 / UTF-16LE / UTF-16BE XML with explicit BOM, line-ending, declaration, and surrogate safeguards.
+- **Negative / Unverified:** Legacy-encoding export remains out of scope for M1; real-browser `<a download>` + `blob:` download behavior under the production CSP remains **unverified** until manual testing on Windows browsers (`ADR-0006`).

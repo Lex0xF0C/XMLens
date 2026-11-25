@@ -1,6 +1,10 @@
 import {
+  detectLineEnding,
+  formatCodeUnitHex,
   formatMessage,
+  inspectXmlDeclarationForSave,
   type Diagnostic,
+  type LineEnding,
   type LocaleCode,
   type MessageCatalog,
   type WellFormednessResult,
@@ -14,9 +18,19 @@ import {
   isFileDataTransfer,
   loadAndDecodeXmlFile,
   pickFirstDroppedFile,
+  utf8ByteLength,
   type DecodeXmlResult,
   type EncodingOverride,
 } from './decodeXml';
+import {
+  getDefaultSavePreferences,
+  isLineEnding,
+  isSaveEncoding,
+  prepareXmlSaveBytes,
+  sanitizeDownloadFilename,
+  SAVE_ENCODING_OPTIONS,
+  triggerBlobDownload,
+} from './saveXml';
 import './styles.css';
 
 type ThemeMode = 'light' | 'dark' | 'high-contrast';
@@ -120,6 +134,8 @@ function mountApp(): void {
   let theme: ThemeMode = detectInitialTheme();
   let encodingOverride: EncodingOverride = 'auto';
   let loadedFileBytes: Uint8Array | null = null;
+  let loadedFileName: string | null = null;
+  let loadedLineEnding: LineEnding = 'LF';
   let isModifiedSinceLoad = false;
   let loadedEncodingInfo: LoadedEncodingInfo | null = null;
   let lastAssumedEncoding: string | undefined;
@@ -183,7 +199,7 @@ function mountApp(): void {
       return;
     }
 
-    if (new TextEncoder().encode(xmlText).byteLength > MAX_PREVIEW_BYTES) {
+    if (utf8ByteLength(xmlText) > MAX_PREVIEW_BYTES) {
       workerClient.cancel();
       validationStatus = { kind: 'too-large', limitMb: 1 };
       updateViewsFn?.();
@@ -230,6 +246,7 @@ function mountApp(): void {
         activeTextarea.value = '';
       }
       loadedEncodingInfo = { encoding: decoded.encoding, hasBom: decoded.hasBom };
+      loadedLineEnding = 'LF';
       lastAssumedEncoding = undefined;
       lastPreDiagnostics = [];
       validationStatus = {
@@ -242,6 +259,24 @@ function mountApp(): void {
       return;
     }
 
+    if (utf8ByteLength(decoded.text) > MAX_PREVIEW_BYTES) {
+      ++checkEpoch;
+      workerClient.cancel();
+      xmlDraft = '';
+      if (activeTextarea) {
+        activeTextarea.value = '';
+      }
+      loadedEncodingInfo = null;
+      loadedLineEnding = 'LF';
+      lastAssumedEncoding = undefined;
+      lastPreDiagnostics = [];
+      validationStatus = { kind: 'too-large', limitMb: 1 };
+      updateViewsFn?.();
+      return;
+    }
+
+    // Detect dominant line ending before assigning into <textarea>, which normalizes CRLF to LF.
+    loadedLineEnding = detectLineEnding(decoded.text);
     xmlDraft = decoded.text;
     if (activeTextarea) {
       activeTextarea.value = xmlDraft;
@@ -263,6 +298,8 @@ function mountApp(): void {
 
   const resetLoadedFileState = (): void => {
     loadedFileBytes = null;
+    loadedFileName = null;
+    loadedLineEnding = 'LF';
     isModifiedSinceLoad = false;
     loadedEncodingInfo = null;
     lastAssumedEncoding = undefined;
@@ -294,6 +331,7 @@ function mountApp(): void {
     }
 
     loadedFileBytes = outcome.bytes;
+    loadedFileName = file.name;
     isModifiedSinceLoad = false;
     await applyDecodedBytesResult(outcome.bytes, outcome.decoded);
   };
@@ -341,6 +379,12 @@ function mountApp(): void {
       fileInput.click();
     });
 
+    const saveBtn = createEl('button', {
+      className: 'tb-btn',
+      text: t('toolbar.saveAs'),
+      attrs: { id: 'save-button', type: 'button' },
+    });
+
     const sampleBtn = createEl('button', {
       className: 'tb-btn',
       text: t('toolbar.loadSample'),
@@ -362,6 +406,7 @@ function mountApp(): void {
     actionsGroup.append(
       fileInput,
       openBtn,
+      saveBtn,
       sampleBtn,
       checkBtn,
       createEl('span', { className: 'toolbar-sep', attrs: { 'aria-hidden': 'true' } }),
@@ -638,6 +683,142 @@ function mountApp(): void {
     aboutDialog.append(aboutHeader, aboutBody, aboutFooter);
     workbench.appendChild(aboutDialog);
 
+    const saveDialog = createEl('dialog', {
+      className: 'about-dialog save-dialog',
+      attrs: { 'aria-labelledby': 'save-dialog-title' },
+    });
+    const saveForm = createEl('form');
+    const saveHeader = createEl('div', { className: 'about-header' });
+    saveHeader.appendChild(
+      createEl('h2', {
+        className: 'about-title',
+        text: t('save.title'),
+        attrs: { id: 'save-dialog-title' },
+      }),
+    );
+
+    const saveBody = createEl('div', { className: 'save-dialog-body' });
+
+    const saveLegacyNotice = createEl('p', {
+      className: 'save-notice',
+      attrs: { role: 'note' },
+    });
+    saveLegacyNotice.hidden = true;
+
+    const saveFilenameField = createEl('div', { className: 'save-field' });
+    saveFilenameField.appendChild(
+      createEl('label', {
+        className: 'save-field-label',
+        text: t('save.filename'),
+        attrs: { for: 'save-filename-input' },
+      }),
+    );
+    const saveFilenameInput = createEl('input', {
+      className: 'save-input',
+      attrs: { id: 'save-filename-input', type: 'text', required: 'true' },
+    });
+    saveFilenameField.appendChild(saveFilenameInput);
+
+    const saveEncodingField = createEl('div', { className: 'save-field' });
+    saveEncodingField.appendChild(
+      createEl('label', {
+        className: 'save-field-label',
+        text: t('save.encoding'),
+        attrs: { for: 'save-encoding-select' },
+      }),
+    );
+    const saveEncodingSelect = createEl('select', {
+      className: 'tb-select',
+      attrs: { id: 'save-encoding-select' },
+    });
+    for (const encOption of SAVE_ENCODING_OPTIONS) {
+      saveEncodingSelect.appendChild(
+        createEl('option', { text: encOption, attrs: { value: encOption } }),
+      );
+    }
+    saveEncodingField.appendChild(saveEncodingSelect);
+
+    const saveBomGroup = createEl('div', { className: 'save-field' });
+    const saveBomRow = createEl('div', { className: 'save-checkbox-row' });
+    const saveBomCheckbox = createEl('input', {
+      attrs: { id: 'save-bom-checkbox', type: 'checkbox' },
+    });
+    const saveBomLabel = createEl('label', {
+      text: t('save.bomLabel'),
+      attrs: { for: 'save-bom-checkbox' },
+    });
+    saveBomRow.append(saveBomCheckbox, saveBomLabel);
+    const saveBomHint = createEl('p', {
+      className: 'save-hint',
+      text: t('save.bomRequiredHint'),
+    });
+    saveBomHint.hidden = true;
+    saveBomGroup.append(saveBomRow, saveBomHint);
+
+    const saveEolField = createEl('div', { className: 'save-field' });
+    saveEolField.appendChild(
+      createEl('label', {
+        className: 'save-field-label',
+        text: t('save.lineEnding'),
+        attrs: { for: 'save-eol-select' },
+      }),
+    );
+    const saveEolSelect = createEl('select', {
+      className: 'tb-select',
+      attrs: { id: 'save-eol-select' },
+    });
+    saveEolSelect.append(
+      createEl('option', { text: t('save.lineEndingLf'), attrs: { value: 'LF' } }),
+      createEl('option', { text: t('save.lineEndingCrLf'), attrs: { value: 'CRLF' } }),
+    );
+    saveEolField.appendChild(saveEolSelect);
+
+    const saveDeclBox = createEl('div', { className: 'save-decl-box' });
+    saveDeclBox.hidden = true;
+    const saveDeclRow = createEl('div', { className: 'save-checkbox-row' });
+    const saveDeclCheckbox = createEl('input', {
+      attrs: { id: 'save-update-decl-checkbox', type: 'checkbox' },
+    });
+    const saveDeclLabel = createEl('label', {
+      attrs: { for: 'save-update-decl-checkbox' },
+    });
+    saveDeclRow.append(saveDeclCheckbox, saveDeclLabel);
+    const saveDeclDetail = createEl('p', { className: 'save-hint' });
+    saveDeclBox.append(saveDeclRow, saveDeclDetail);
+
+    const saveErrorBox = createEl('p', {
+      className: 'save-error',
+      attrs: { role: 'alert' },
+    });
+    saveErrorBox.hidden = true;
+
+    saveBody.append(
+      saveLegacyNotice,
+      saveFilenameField,
+      saveEncodingField,
+      saveBomGroup,
+      saveEolField,
+      saveDeclBox,
+      saveErrorBox,
+    );
+
+    const saveFooter = createEl('div', { className: 'about-footer save-footer' });
+    const saveCancelBtn = createEl('button', {
+      className: 'tb-btn',
+      text: t('save.cancel'),
+      attrs: { type: 'button' },
+    });
+    const saveConfirmBtn = createEl('button', {
+      className: 'tb-btn',
+      text: t('save.confirm'),
+      attrs: { type: 'submit' },
+    });
+    saveFooter.append(saveCancelBtn, saveConfirmBtn);
+
+    saveForm.append(saveHeader, saveBody, saveFooter);
+    saveDialog.appendChild(saveForm);
+    workbench.appendChild(saveDialog);
+
     const renderDiagnosticsList = (
       diagnostics: readonly Diagnostic[],
       truncatedDiagnostics: boolean,
@@ -846,6 +1027,128 @@ function mountApp(): void {
       } else {
         void runWorkerCheck(xmlDraft);
       }
+    });
+
+    let utf8BomChoice = false;
+
+    const syncSaveBomControl = (): void => {
+      const selectedEnc = isSaveEncoding(saveEncodingSelect.value)
+        ? saveEncodingSelect.value
+        : 'UTF-8';
+      if (selectedEnc === 'UTF-8') {
+        saveBomCheckbox.disabled = false;
+        saveBomCheckbox.checked = utf8BomChoice;
+        saveBomHint.hidden = true;
+      } else {
+        saveBomCheckbox.disabled = true;
+        saveBomCheckbox.checked = true;
+        saveBomHint.hidden = false;
+      }
+    };
+
+    const syncSaveDeclarationPrompt = (): void => {
+      const selectedEnc = isSaveEncoding(saveEncodingSelect.value)
+        ? saveEncodingSelect.value
+        : 'UTF-8';
+      const currentText = activeTextarea?.value ?? xmlDraft;
+      const declCheck = inspectXmlDeclarationForSave(currentText, selectedEnc);
+      if (declCheck.needsUpdate) {
+        saveDeclBox.hidden = false;
+        saveDeclCheckbox.checked = true;
+        saveDeclLabel.textContent = t('save.updateDecl', { encoding: selectedEnc });
+        saveDeclDetail.textContent =
+          declCheck.declaredEncoding !== undefined
+            ? t('save.updateDeclDetail', { declared: declCheck.declaredEncoding })
+            : t('save.addDeclEncodingDetail');
+      } else {
+        saveDeclBox.hidden = true;
+        saveDeclCheckbox.checked = false;
+      }
+    };
+
+    saveBomCheckbox.addEventListener('change', () => {
+      if (saveEncodingSelect.value === 'UTF-8') {
+        utf8BomChoice = saveBomCheckbox.checked;
+      }
+    });
+
+    saveEncodingSelect.addEventListener('change', () => {
+      syncSaveBomControl();
+      syncSaveDeclarationPrompt();
+    });
+
+    saveBtn.addEventListener('click', () => {
+      xmlDraft = activeTextarea?.value ?? xmlDraft;
+      const prefs = getDefaultSavePreferences(loadedEncodingInfo, loadedLineEnding);
+      saveFilenameInput.value = sanitizeDownloadFilename(loadedFileName);
+      saveEncodingSelect.value = prefs.encoding;
+      utf8BomChoice = prefs.encoding === 'UTF-8' ? prefs.includeBom : false;
+      saveEolSelect.value = prefs.lineEnding;
+
+      if (prefs.legacySourceEncoding !== undefined) {
+        saveLegacyNotice.hidden = false;
+        saveLegacyNotice.textContent = t('save.legacyNotice', {
+          encoding: prefs.legacySourceEncoding,
+        });
+      } else {
+        saveLegacyNotice.hidden = true;
+        saveLegacyNotice.textContent = '';
+      }
+
+      saveErrorBox.hidden = true;
+      saveErrorBox.textContent = '';
+      syncSaveBomControl();
+      syncSaveDeclarationPrompt();
+
+      if (!saveDialog.open) {
+        saveDialog.showModal();
+        saveFilenameInput.focus();
+        saveFilenameInput.select();
+      }
+    });
+
+    saveCancelBtn.addEventListener('click', () => {
+      saveDialog.close();
+    });
+
+    saveDialog.addEventListener('close', () => {
+      document.getElementById('save-button')?.focus();
+    });
+
+    saveForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      saveErrorBox.hidden = true;
+      saveErrorBox.textContent = '';
+
+      const currentText = activeTextarea?.value ?? xmlDraft;
+      const chosenEncoding = isSaveEncoding(saveEncodingSelect.value)
+        ? saveEncodingSelect.value
+        : 'UTF-8';
+      const chosenEol = isLineEnding(saveEolSelect.value) ? saveEolSelect.value : 'LF';
+      const includeBom = chosenEncoding === 'UTF-8' ? saveBomCheckbox.checked : true;
+      const updateDeclaration = !saveDeclBox.hidden && saveDeclCheckbox.checked;
+      const filename = sanitizeDownloadFilename(saveFilenameInput.value);
+
+      const prepared = prepareXmlSaveBytes(currentText, {
+        encoding: chosenEncoding,
+        includeBom,
+        lineEnding: chosenEol,
+        updateDeclaration,
+      });
+
+      if (!prepared.ok) {
+        saveErrorBox.hidden = false;
+        saveErrorBox.textContent = t('save.loneSurrogateError', {
+          codeUnit: formatCodeUnitHex(prepared.loneSurrogate.codeUnit),
+          line: prepared.loneSurrogate.line,
+          column: prepared.loneSurrogate.column,
+          offset: prepared.loneSurrogate.offset,
+        });
+        return;
+      }
+
+      triggerBlobDownload(prepared.bytes, filename);
+      saveDialog.close();
     });
 
     aboutBtn.addEventListener('click', () => {

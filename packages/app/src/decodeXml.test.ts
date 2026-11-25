@@ -5,6 +5,7 @@ import {
   isFileDataTransfer,
   loadAndDecodeXmlFile,
   pickFirstDroppedFile,
+  utf8ByteLength,
 } from './decodeXml';
 
 function asciiBytes(text: string): Uint8Array {
@@ -203,8 +204,7 @@ describe('decodeXmlBytes', () => {
     }
   });
 
-  it('pins current auto behavior for ASCII bytes declaring encoding="UTF-16" without BOM/pattern (pending maintainer decision)', () => {
-    // Odd byte length (43 bytes) triggers fatal TextDecoder('utf-16le') failure -> decode-error.
+  it('rejects ASCII bytes declaring encoding="UTF-16" without BOM/pattern in auto mode and allows UTF-8 override', () => {
     const oddAsciiDeclUtf16 = asciiBytes('<?xml version="1.0" encoding="UTF-16"?><r/>');
     expect(oddAsciiDeclUtf16.byteLength % 2).toBe(1);
     const oddResult = decodeXmlBytes(oddAsciiDeclUtf16, 'auto');
@@ -212,28 +212,52 @@ describe('decodeXmlBytes', () => {
     if (!oddResult.ok) {
       expect(oddResult.failureReason).toBe('decode-error');
       expect(oddResult.encoding).toBe('UTF-16');
-      expect(oddResult.diagnostics.some((d) => d.code === 'XML_DECODE_ERROR')).toBe(true);
+      expect(
+        oddResult.diagnostics.some((d) => d.code === 'XML_ENCODING_DECLARATION_MISMATCH'),
+      ).toBe(true);
     }
 
-    // Even byte length (44 bytes): WHATWG TextDecoder('UTF-16') maps to 'utf-16le' and decodes
-    // ASCII byte pairs as UTF-16LE code units unless an unpaired surrogate happens to appear.
     const evenAsciiDeclUtf16 = asciiBytes('<?xml version="1.0" encoding="UTF-16"?><ro/>');
     expect(evenAsciiDeclUtf16.byteLength % 2).toBe(0);
     const evenResult = decodeXmlBytes(evenAsciiDeclUtf16, 'auto');
-    expect(evenResult.ok).toBe(true);
-    if (evenResult.ok) {
+    expect(evenResult.ok).toBe(false);
+    if (!evenResult.ok) {
+      expect(evenResult.failureReason).toBe('decode-error');
       expect(evenResult.encoding).toBe('UTF-16');
-      expect(evenResult.text).not.toContain('<?xml');
+      expect(
+        evenResult.diagnostics.some((d) => d.code === 'XML_ENCODING_DECLARATION_MISMATCH'),
+      ).toBe(true);
+    }
+
+    // Manual override bypasses the auto-detection mismatch so users can still open misdeclared UTF-8 files.
+    const overrideResult = decodeXmlBytes(evenAsciiDeclUtf16, 'UTF-8');
+    expect(overrideResult.ok).toBe(true);
+    if (overrideResult.ok) {
+      expect(overrideResult.encoding).toBe('UTF-8');
+      expect(overrideResult.text).toBe('<?xml version="1.0" encoding="UTF-16"?><ro/>');
+    }
+
+    // Genuine UTF-16 with BOM declaring encoding="UTF-16" continues to succeed in auto mode.
+    const genuineUtf16Bom = concatBytes(
+      new Uint8Array([0xff, 0xfe]),
+      utf16LeBytes('<?xml version="1.0" encoding="UTF-16"?><ro/>'),
+    );
+    const bomResult = decodeXmlBytes(genuineUtf16Bom, 'auto');
+    expect(bomResult.ok).toBe(true);
+    if (bomResult.ok) {
+      expect(bomResult.encoding).toBe('UTF-16LE');
+      expect(bomResult.hasBom).toBe(true);
+      expect(bomResult.text).toBe('<?xml version="1.0" encoding="UTF-16"?><ro/>');
     }
   });
 });
 
 describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
-  it('enforces size limits before reading and decodes valid files through the shared pipeline', async () => {
+  it('enforces 3x raw safety cap and decoded UTF-8 byte boundaries consistently', async () => {
     let arrayBufferCalled = false;
     const oversizedReported = await loadAndDecodeXmlFile(
       {
-        size: 1025,
+        size: 1024 * 3 + 1,
         arrayBuffer: async () => {
           arrayBufferCalled = true;
           return new ArrayBuffer(0);
@@ -248,12 +272,74 @@ describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
     const oversizedActual = await loadAndDecodeXmlFile(
       {
         size: 10,
-        arrayBuffer: async () => new Uint8Array(1025).buffer,
+        arrayBuffer: async () => new Uint8Array(1024 * 3 + 1).buffer,
       },
       1024,
       'auto',
     );
     expect(oversizedActual).toEqual({ status: 'too-large' });
+
+    // Exact decoded UTF-8 limit (1024 bytes) succeeds
+    const exactXml = `<r>${'a'.repeat(1024 - 7)}</r>`;
+    expect(utf8ByteLength(exactXml)).toBe(1024);
+    const exactBytes = asciiBytes(exactXml);
+    const exactRes = await loadAndDecodeXmlFile(
+      {
+        size: exactBytes.byteLength,
+        arrayBuffer: async () => {
+          const ab = new ArrayBuffer(exactBytes.byteLength);
+          new Uint8Array(ab).set(exactBytes);
+          return ab;
+        },
+      },
+      1024,
+      'auto',
+    );
+    expect(exactRes.status).toBe('decoded');
+
+    // Decoded UTF-8 limit + 1 (1025 bytes) fails with too-large
+    const overByOneBytes = asciiBytes(`<r>${'a'.repeat(1025 - 7)}</r>`);
+    expect(overByOneBytes.byteLength).toBe(1025);
+    const overByOneRes = await loadAndDecodeXmlFile(
+      {
+        size: overByOneBytes.byteLength,
+        arrayBuffer: async () => {
+          const ab = new ArrayBuffer(overByOneBytes.byteLength);
+          new Uint8Array(ab).set(overByOneBytes);
+          return ab;
+        },
+      },
+      1024,
+      'auto',
+    );
+    expect(overByOneRes).toEqual({ status: 'too-large' });
+
+    // ~700,007 bytes of Shift_JIS expands past 1 MiB (1,048,576 bytes) in UTF-8 -> too-large
+    const sjisHead = asciiBytes('<?xml version="1.0" encoding="Shift_JIS"?><r>');
+    const sjisTail = asciiBytes('</r>');
+    const sjisChars = 350_000;
+    const expandedSjis = new Uint8Array(sjisHead.byteLength + sjisChars * 2 + sjisTail.byteLength);
+    expandedSjis.set(sjisHead, 0);
+    for (let i = 0; i < sjisChars; i += 1) {
+      const off = sjisHead.byteLength + i * 2;
+      expandedSjis[off] = 0x93;
+      expandedSjis[off + 1] = 0xfa;
+    }
+    expandedSjis.set(sjisTail, sjisHead.byteLength + sjisChars * 2);
+    expect(expandedSjis.byteLength).toBeLessThan(1024 * 1024);
+    const sjisExpandedRes = await loadAndDecodeXmlFile(
+      {
+        size: expandedSjis.byteLength,
+        arrayBuffer: async () => {
+          const ab = new ArrayBuffer(expandedSjis.byteLength);
+          new Uint8Array(ab).set(expandedSjis);
+          return ab;
+        },
+      },
+      1024 * 1024,
+      'auto',
+    );
+    expect(sjisExpandedRes).toEqual({ status: 'too-large' });
 
     const sjisPayload = concatBytes(
       asciiBytes('<?xml version="1.0" encoding="Shift_JIS"?><root>'),
