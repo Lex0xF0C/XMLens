@@ -26,16 +26,17 @@ Language selection order at runtime:
 
 Terms marked **Undecided (未決)** are awaiting final maintainer approval. Do not pick one term arbitrarily in UI strings until decided.
 
-| English Term          | Japanese Term     | Status               | Notes                                                                                                          |
-| --------------------- | ----------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Well-formed           | 整形式            | Agreed               | XML syntax conforms to W3C XML 1.0 well-formedness rules.                                                      |
-| Well-formedness check | 整形式チェック    | Agreed               | Checking syntactic well-formedness only (no schema).                                                           |
-| Validation            | 検証 / 妥当性検査 | **Undecided (未決)** | Both 「検証」 and 「妥当性検査」 are candidates; maintainer decision pending (`IMPLEMENTATION_PLAN.md` §10.7). |
-| Schema                | スキーマ          | Agreed               | XSD, DTD, RELAX NG, or Schematron schema files.                                                                |
-| Namespace             | 名前空間          | Agreed               | XML Namespace URI and prefix mapping.                                                                          |
-| Attribute             | 属性              | Agreed               | XML element attribute.                                                                                         |
-| Element               | 要素              | Agreed               | XML element node.                                                                                              |
-| Diagnostic            | 診断              | Agreed               | Structured error, warning, or informational message.                                                           |
-| Project               | プロジェクト      | **Undecided (未決)** | Domain container for XML files, catalogs, and validation/transformation scenarios (`ADR-0008`).                |
-| Resource              | リソース          | **Undecided (未決)** | External/local schema, stylesheet, catalog, or XML target resolved via `ResourceResolver` (`ADR-0009`).        |
-| Catalog               | カタログ          | **Undecided (未決)** | OASIS XML Catalog mapping URIs, system IDs, and public IDs (`ADR-0009`).                                       |
+| English Term          | Japanese Term                     | Status               | Notes                                                                                                          |
+| --------------------- | --------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Well-formed           | 整形式                            | Agreed               | XML syntax conforms to W3C XML 1.0 well-formedness rules.                                                      |
+| Well-formedness check | 整形式チェック                    | Agreed               | Checking syntactic well-formedness only (no schema).                                                           |
+| Validation            | 検証 / 妥当性検査                 | **Undecided (未決)** | Both 「検証」 and 「妥当性検査」 are candidates; maintainer decision pending (`IMPLEMENTATION_PLAN.md` §10.7). |
+| Schema                | スキーマ                          | Agreed               | XSD, DTD, RELAX NG, or Schematron schema files.                                                                |
+| Namespace             | 名前空間                          | Agreed               | XML Namespace URI and prefix mapping.                                                                          |
+| Attribute             | 属性                              | Agreed               | XML element attribute.                                                                                         |
+| Element               | 要素                              | Agreed               | XML element node.                                                                                              |
+| Diagnostic            | 診断                              | Agreed               | Structured error, warning, or informational message.                                                           |
+| Project               | プロジェクト                      | **Undecided (未決)** | Domain container for XML files, catalogs, and validation/transformation scenarios (`ADR-0008`).                |
+| Resource              | リソース                          | **Undecided (未決)** | External/local schema, stylesheet, catalog, or XML target resolved via `ResourceResolver` (`ADR-0009`).        |
+| Catalog               | カタログ                          | **Undecided (未決)** | OASIS XML Catalog mapping URIs, system IDs, and public IDs (`ADR-0009`).                                       |
+| Encoding              | 文字コード / 文字エンコーディング | **Undecided (未決)** | Character encoding label (`locales/ja.json` provisionally uses 「文字コード」 pending maintainer decision).    |

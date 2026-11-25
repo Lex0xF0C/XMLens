@@ -176,7 +176,7 @@ Because browsers enforce CORS and our v1 security posture avoids unsolicited out
 | Build | Vite | Static output, simple Pages deploy |
 | UI | Preact + signals (alternative: Svelte) | Small bundle |
 | Editor | CodeMirror 6 + `@codemirror/lang-xml` | Handles large docs, extensible, MIT |
-| XML parsing | Native `DOMParser` for light tasks; `libxml2-wasm` or `xmllint-wasm` for validation (`xmllint-wasm` is MIT per npm; verify current package + libxml2 license before adoption) | Standards-compliant XSD 1.0 |
+| XML parsing | `saxes` 6.0.0 in `@xmlens/core` (worker-executed, ADR-0003; native `DOMParser` was an M0 placeholder only); `libxml2-wasm` or `xmllint-wasm` for XSD/DTD validation (`xmllint-wasm` is MIT per npm; verify current package + libxml2 license before adoption) | Worker-safe well-formedness (`saxes`); standards-compliant XSD 1.0 |
 | XPath 1.0 | Native `document.evaluate` | No dependency |
 | XPath 3.1 | `fontoxpath` candidate (verify) | Permissive license |
 | XSLT 1.0 | WASM libxslt-based engine (spike S2); no reliance on native `XSLTProcessor` | Browser XSLT is being removed |

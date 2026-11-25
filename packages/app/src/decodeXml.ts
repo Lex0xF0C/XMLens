@@ -1,0 +1,228 @@
+import {
+  detectXmlEncoding,
+  normalizeXmlEncodingLabel,
+  type Diagnostic,
+  type EncodingDetectionSource,
+} from '@xmlens/core';
+
+export const ENCODING_OVERRIDE_OPTIONS = [
+  'auto',
+  'UTF-8',
+  'UTF-16LE',
+  'UTF-16BE',
+  'Shift_JIS',
+  'EUC-JP',
+  'ISO-2022-JP',
+  'windows-1252',
+] as const;
+
+export type EncodingOverride = (typeof ENCODING_OVERRIDE_OPTIONS)[number];
+
+export type DecodeXmlResult =
+  | {
+      readonly ok: true;
+      readonly text: string;
+      readonly encoding: string;
+      readonly assumedEncoding: string;
+      readonly hasBom: boolean;
+      readonly source: EncodingDetectionSource | 'override';
+      readonly declaredEncoding?: string;
+      readonly diagnostics: readonly Diagnostic[];
+    }
+  | {
+      readonly ok: false;
+      readonly failureReason: 'unsupported' | 'decode-error';
+      readonly encoding: string;
+      readonly hasBom: boolean;
+      readonly source: EncodingDetectionSource | 'override';
+      readonly declaredEncoding?: string;
+      readonly detail: string;
+      readonly diagnostics: readonly Diagnostic[];
+    };
+
+function createUnknownFallbackDiagnostic(
+  requested: string,
+  fallback: string,
+  detail: string,
+): Diagnostic {
+  return {
+    severity: 'warning',
+    code: 'XML_UNKNOWN_ENCODING_FALLBACK',
+    messageKey: 'diagnostics.encoding.unknownFallback',
+    params: {
+      requested,
+      fallback,
+      detail,
+    },
+    range: { line: 1, column: 1, offset: 0 },
+    source: 'core',
+  };
+}
+
+function createDecodeErrorDiagnostic(encoding: string, detail: string): Diagnostic {
+  return {
+    severity: 'error',
+    code: 'XML_DECODE_ERROR',
+    messageKey: 'diagnostics.encoding.decodeError',
+    params: {
+      encoding,
+      detail,
+    },
+    range: { line: 1, column: 1, offset: 0 },
+    source: 'core',
+  };
+}
+
+function hasMatchingBom(
+  detectedBomLength: 0 | 2 | 3 | 4,
+  detectedEncoding: string,
+  activeEncoding: string,
+): boolean {
+  if (detectedBomLength === 0) {
+    return false;
+  }
+  const activeNorm = normalizeXmlEncodingLabel(activeEncoding);
+  if (detectedEncoding === 'UTF-8') {
+    return activeNorm === 'UTF-8';
+  }
+  if (detectedEncoding === 'UTF-16LE') {
+    return activeNorm === 'UTF-16LE' || activeNorm === 'UTF-16';
+  }
+  if (detectedEncoding === 'UTF-16BE') {
+    return activeNorm === 'UTF-16BE' || activeNorm === 'UTF-16';
+  }
+  return detectedEncoding === activeNorm;
+}
+
+/**
+ * Decodes raw XML file bytes using XML 1.0 Appendix F detection (unless overridden) and
+ * `TextDecoder(..., { fatal: true })`. DOM-free so it can be unit-tested in Node.
+ */
+export function decodeXmlBytes(bytes: Uint8Array, override: string = 'auto'): DecodeXmlResult {
+  const detection = detectXmlEncoding(bytes);
+
+  if (override === 'auto') {
+    const hasBom = detection.bomLength > 0;
+    if (!detection.supported) {
+      const firstDiagDetail = detection.diagnostics[0]?.params?.detail;
+      const detail =
+        typeof firstDiagDetail === 'string'
+          ? firstDiagDetail
+          : `Unsupported encoding: ${detection.encoding}`;
+      return {
+        ok: false,
+        failureReason: 'unsupported',
+        encoding: detection.encoding,
+        hasBom,
+        source: detection.source,
+        detail,
+        diagnostics: detection.diagnostics,
+        ...(detection.declaredEncoding !== undefined
+          ? { declaredEncoding: detection.declaredEncoding }
+          : {}),
+      };
+    }
+
+    const diagnostics: Diagnostic[] = [...detection.diagnostics];
+    let effectiveEncoding = detection.encoding;
+    let assumedEncoding =
+      detection.source === 'declaration' && detection.declaredEncoding !== undefined
+        ? detection.declaredEncoding
+        : detection.encoding;
+
+    let decoder: TextDecoder;
+    try {
+      decoder = new TextDecoder(detection.encoding, { fatal: true });
+    } catch (err: unknown) {
+      if (err instanceof RangeError) {
+        diagnostics.push(createUnknownFallbackDiagnostic(detection.encoding, 'UTF-8', err.message));
+        effectiveEncoding = 'UTF-8';
+        assumedEncoding = 'UTF-8';
+        decoder = new TextDecoder('UTF-8', { fatal: true });
+      } else {
+        throw err;
+      }
+    }
+
+    try {
+      const text = decoder.decode(bytes);
+      return {
+        ok: true,
+        text,
+        encoding: effectiveEncoding,
+        assumedEncoding,
+        hasBom,
+        source: detection.source,
+        diagnostics,
+        ...(detection.declaredEncoding !== undefined
+          ? { declaredEncoding: detection.declaredEncoding }
+          : {}),
+      };
+    } catch (err: unknown) {
+      const detail = err instanceof Error ? err.message : String(err);
+      diagnostics.push(createDecodeErrorDiagnostic(effectiveEncoding, detail));
+      return {
+        ok: false,
+        failureReason: 'decode-error',
+        encoding: effectiveEncoding,
+        hasBom,
+        source: detection.source,
+        detail,
+        diagnostics,
+        ...(detection.declaredEncoding !== undefined
+          ? { declaredEncoding: detection.declaredEncoding }
+          : {}),
+      };
+    }
+  }
+
+  const normalizedOverride = normalizeXmlEncodingLabel(override);
+  const diagnostics: Diagnostic[] = [];
+  let effectiveEncoding = normalizedOverride;
+  let decoder: TextDecoder;
+
+  try {
+    decoder = new TextDecoder(normalizedOverride, { fatal: true });
+  } catch (err: unknown) {
+    if (err instanceof RangeError) {
+      diagnostics.push(createUnknownFallbackDiagnostic(override, 'UTF-8', err.message));
+      effectiveEncoding = 'UTF-8';
+      decoder = new TextDecoder('UTF-8', { fatal: true });
+    } else {
+      throw err;
+    }
+  }
+
+  const hasBom = hasMatchingBom(detection.bomLength, detection.encoding, effectiveEncoding);
+
+  try {
+    const text = decoder.decode(bytes);
+    return {
+      ok: true,
+      text,
+      encoding: effectiveEncoding,
+      assumedEncoding: effectiveEncoding,
+      hasBom,
+      source: 'override',
+      diagnostics,
+      ...(detection.declaredEncoding !== undefined
+        ? { declaredEncoding: detection.declaredEncoding }
+        : {}),
+    };
+  } catch (err: unknown) {
+    const detail = err instanceof Error ? err.message : String(err);
+    diagnostics.push(createDecodeErrorDiagnostic(effectiveEncoding, detail));
+    return {
+      ok: false,
+      failureReason: 'decode-error',
+      encoding: effectiveEncoding,
+      hasBom,
+      source: 'override',
+      detail,
+      diagnostics,
+      ...(detection.declaredEncoding !== undefined
+        ? { declaredEncoding: detection.declaredEncoding }
+        : {}),
+    };
+  }
+}

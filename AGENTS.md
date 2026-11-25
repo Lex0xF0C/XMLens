@@ -45,7 +45,9 @@ npm run test:e2e       # Playwright (Chromium, Firefox, WebKit) incl. axe a11y c
 npm run i18n:check     # key parity, placeholder parity, and non-empty check between locales/en.json and locales/ja.json
 npm run plugins:guard  # fails on disallowed Saxon/xslt3 paths, dependencies, or vendor notices
 npm run license:check  # fails on disallowed or unverified dependency licenses
-npm run check          # lint + format:check + typecheck + test + i18n:check + plugins:guard + license:check
+npm run notices:generate # generates THIRD_PARTY_NOTICES.md and packages/app/public/THIRD_PARTY_NOTICES.md
+npm run notices:check  # verifies committed notices match runtime dependencies
+npm run check          # lint + format:check + typecheck + test + i18n:check + plugins:guard + license:check + notices:check
 ```
 
 Before declaring any task done, run `npm run check` (and `npm run test:e2e` if UI changed). Report what you ran and the result. If you could not run something, say so explicitly. Do not claim success without evidence.

@@ -50,3 +50,10 @@ export {
   type WellFormednessResult,
   type XmlDeclarationInfo,
 } from './wellFormedness';
+
+export {
+  detectXmlEncoding,
+  normalizeXmlEncodingLabel,
+  type EncodingDetectionSource,
+  type XmlEncodingDetectionResult,
+} from './encoding';

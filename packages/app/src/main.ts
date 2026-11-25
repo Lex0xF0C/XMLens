@@ -8,6 +8,7 @@ import {
 import { createWellFormednessWorkerClient } from '@xmlens/workers';
 import enCatalog from '../../../locales/en.json';
 import jaCatalog from '../../../locales/ja.json';
+import { decodeXmlBytes, ENCODING_OVERRIDE_OPTIONS, type EncodingOverride } from './decodeXml';
 import './styles.css';
 
 type ThemeMode = 'light' | 'dark' | 'high-contrast';
@@ -82,9 +83,24 @@ type ValidationStatus =
   | { readonly kind: 'empty' }
   | { readonly kind: 'checked'; readonly result: WellFormednessResult }
   | { readonly kind: 'too-large'; readonly limitMb: number }
+  | {
+      readonly kind: 'decode-error';
+      readonly failureReason: 'unsupported' | 'decode-error';
+      readonly encoding: string;
+      readonly diagnostics: readonly Diagnostic[];
+    }
   | { readonly kind: 'read-error'; readonly detail: string }
   | { readonly kind: 'worker-timeout' }
   | { readonly kind: 'worker-error'; readonly detail: string };
+
+interface LoadedEncodingInfo {
+  readonly encoding: string;
+  readonly hasBom: boolean;
+}
+
+function isEncodingOverride(value: string): value is EncodingOverride {
+  return (ENCODING_OVERRIDE_OPTIONS as readonly string[]).includes(value);
+}
 
 function mountApp(): void {
   const root = document.getElementById('app');
@@ -94,6 +110,12 @@ function mountApp(): void {
 
   let locale: LocaleCode = detectInitialLocale();
   let theme: ThemeMode = detectInitialTheme();
+  let encodingOverride: EncodingOverride = 'auto';
+  let loadedFileBytes: Uint8Array | null = null;
+  let isModifiedSinceLoad = false;
+  let loadedEncodingInfo: LoadedEncodingInfo | null = null;
+  let lastAssumedEncoding: string | undefined;
+  let lastPreDiagnostics: readonly Diagnostic[] = [];
   let xmlDraft = '';
   let validationStatus: ValidationStatus = { kind: 'empty' };
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -137,7 +159,13 @@ function mountApp(): void {
     }
   };
 
-  const runWorkerCheck = async (xmlText: string): Promise<void> => {
+  const runWorkerCheck = async (
+    xmlText: string,
+    checkOptions?: {
+      readonly assumedEncoding?: string;
+      readonly preDiagnostics?: readonly Diagnostic[];
+    },
+  ): Promise<void> => {
     const epoch = ++checkEpoch;
     const trimmed = xmlText.trim();
     if (!trimmed) {
@@ -155,19 +183,67 @@ function mountApp(): void {
     }
 
     setCheckingStateFn?.();
-    const outcome = await workerClient.check(xmlText);
+    const workerOptions =
+      checkOptions?.assumedEncoding !== undefined
+        ? { assumedEncoding: checkOptions.assumedEncoding }
+        : undefined;
+    const outcome = await workerClient.check(xmlText, workerOptions);
     if (epoch !== checkEpoch || outcome.status === 'cancelled') {
       return;
     }
 
     if (outcome.status === 'ok') {
-      validationStatus = { kind: 'checked', result: outcome.result };
+      const preDiags = checkOptions?.preDiagnostics ?? [];
+      const result: WellFormednessResult =
+        preDiags.length > 0
+          ? {
+              ...outcome.result,
+              diagnostics: [...preDiags, ...outcome.result.diagnostics],
+            }
+          : outcome.result;
+      validationStatus = { kind: 'checked', result };
     } else if (outcome.status === 'timeout') {
       validationStatus = { kind: 'worker-timeout' };
     } else {
       validationStatus = { kind: 'worker-error', detail: outcome.message };
     }
     updateViewsFn?.();
+  };
+
+  const decodeAndCheckLoadedBytes = async (bytes: Uint8Array): Promise<void> => {
+    clearDebounce();
+    const decoded = decodeXmlBytes(bytes, encodingOverride);
+    if (!decoded.ok) {
+      ++checkEpoch;
+      workerClient.cancel();
+      xmlDraft = '';
+      if (activeTextarea) {
+        activeTextarea.value = '';
+      }
+      loadedEncodingInfo = { encoding: decoded.encoding, hasBom: decoded.hasBom };
+      lastAssumedEncoding = undefined;
+      lastPreDiagnostics = [];
+      validationStatus = {
+        kind: 'decode-error',
+        failureReason: decoded.failureReason,
+        encoding: decoded.encoding,
+        diagnostics: decoded.diagnostics,
+      };
+      updateViewsFn?.();
+      return;
+    }
+
+    xmlDraft = decoded.text;
+    if (activeTextarea) {
+      activeTextarea.value = xmlDraft;
+    }
+    loadedEncodingInfo = { encoding: decoded.encoding, hasBom: decoded.hasBom };
+    lastAssumedEncoding = decoded.assumedEncoding;
+    lastPreDiagnostics = decoded.diagnostics;
+    await runWorkerCheck(xmlDraft, {
+      assumedEncoding: decoded.assumedEncoding,
+      preDiagnostics: decoded.diagnostics,
+    });
   };
 
   const render = (): void => {
@@ -313,7 +389,35 @@ function mountApp(): void {
     });
     themeGroup.append(themeLabel, themeSelect);
 
-    settingsGroup.append(langGroup, themeGroup);
+    const encodingGroup = createEl('div', { className: 'control-group' });
+    const encodingLabel = createEl('label', {
+      className: 'control-label',
+      text: t('nav.fileEncoding'),
+      attrs: { for: 'encoding-select' },
+    });
+    const encodingSelect = createEl('select', {
+      className: 'tb-select',
+      attrs: { id: 'encoding-select' },
+    });
+    for (const optionValue of ENCODING_OVERRIDE_OPTIONS) {
+      const opt = createEl('option', {
+        text: optionValue === 'auto' ? t('encoding.auto') : optionValue,
+        attrs: { value: optionValue },
+      });
+      opt.selected = encodingOverride === optionValue;
+      encodingSelect.appendChild(opt);
+    }
+    encodingSelect.addEventListener('change', () => {
+      if (isEncodingOverride(encodingSelect.value)) {
+        encodingOverride = encodingSelect.value;
+        if (loadedFileBytes !== null && !isModifiedSinceLoad) {
+          void decodeAndCheckLoadedBytes(loadedFileBytes);
+        }
+      }
+    });
+    encodingGroup.append(encodingLabel, encodingSelect);
+
+    settingsGroup.append(encodingGroup, langGroup, themeGroup);
     toolbar.append(actionsGroup, settingsGroup);
     workbench.appendChild(toolbar);
 
@@ -348,6 +452,9 @@ function mountApp(): void {
 
     textarea.addEventListener('input', () => {
       xmlDraft = textarea.value;
+      isModifiedSinceLoad = true;
+      lastAssumedEncoding = undefined;
+      lastPreDiagnostics = [];
       clearDebounce();
       workerClient.cancel();
       const scheduledText = xmlDraft;
@@ -389,11 +496,12 @@ function mountApp(): void {
     const statusFields = createEl('div', { className: 'status-fields' });
     const statusStateField = createEl('span', { className: 'status-field' });
     const statusCountField = createEl('span', { className: 'status-field' });
+    const statusEncodingField = createEl('span', { className: 'status-field' });
     const statusLangField = createEl('span', {
       className: 'status-field',
       text: t('statusBar.language'),
     });
-    statusFields.append(statusStateField, statusCountField, statusLangField);
+    statusFields.append(statusStateField, statusCountField, statusEncodingField, statusLangField);
 
     const statusPrivacyField = createEl('span', {
       className: 'status-field',
@@ -443,9 +551,12 @@ function mountApp(): void {
     aboutDialog.append(aboutHeader, aboutBody, aboutFooter);
     workbench.appendChild(aboutDialog);
 
-    const renderDiagnosticsList = (result: WellFormednessResult): void => {
+    const renderDiagnosticsList = (
+      diagnostics: readonly Diagnostic[],
+      truncatedDiagnostics: boolean,
+    ): void => {
       diagListContainer.replaceChildren();
-      if (result.diagnostics.length === 0) {
+      if (diagnostics.length === 0) {
         return;
       }
 
@@ -454,7 +565,7 @@ function mountApp(): void {
         attrs: { 'aria-label': t('diagnostics.listLabel') },
       });
 
-      for (const diag of result.diagnostics) {
+      for (const diag of diagnostics) {
         const item = createEl('li', { className: `diag-item is-${diag.severity}` });
         const jumpBtn = createEl('button', {
           className: 'diag-item-btn',
@@ -519,11 +630,11 @@ function mountApp(): void {
 
       diagListContainer.appendChild(list);
 
-      if (result.truncatedDiagnostics) {
+      if (truncatedDiagnostics) {
         diagListContainer.appendChild(
           createEl('p', {
             className: 'diag-truncated',
-            text: t('diagnostics.truncated', { shown: result.diagnostics.length }),
+            text: t('diagnostics.truncated', { shown: diagnostics.length }),
           }),
         );
       }
@@ -532,6 +643,14 @@ function mountApp(): void {
     const updateStatusViews = (): void => {
       resultBox.classList.remove('is-valid', 'is-invalid', 'has-warnings');
       diagListContainer.replaceChildren();
+
+      const encodingValue =
+        loadedEncodingInfo === null
+          ? t('statusBar.encodingNone')
+          : loadedEncodingInfo.hasBom
+            ? t('statusBar.encodingWithBom', { encoding: loadedEncodingInfo.encoding })
+            : loadedEncodingInfo.encoding;
+      statusEncodingField.textContent = t('statusBar.encoding', { value: encodingValue });
 
       if (validationStatus.kind === 'empty') {
         resultBox.textContent = t('preview.empty');
@@ -544,6 +663,15 @@ function mountApp(): void {
         });
         statusStateField.textContent = t('statusBar.tooLarge');
         statusCountField.textContent = t('statusBar.elements', { count: 0 });
+      } else if (validationStatus.kind === 'decode-error') {
+        resultBox.classList.add('is-invalid');
+        resultBox.textContent =
+          validationStatus.failureReason === 'unsupported'
+            ? t('preview.unsupportedEncoding', { encoding: validationStatus.encoding })
+            : t('preview.decodeError', { encoding: validationStatus.encoding });
+        statusStateField.textContent = t('statusBar.decodeError');
+        statusCountField.textContent = t('statusBar.elements', { count: 0 });
+        renderDiagnosticsList(validationStatus.diagnostics, false);
       } else if (validationStatus.kind === 'read-error') {
         resultBox.classList.add('is-invalid');
         resultBox.textContent = t('preview.readError', {
@@ -594,7 +722,7 @@ function mountApp(): void {
           statusStateField.textContent = t('statusBar.notWellFormed');
         }
         statusCountField.textContent = t('statusBar.elements', { count: result.elementCount });
-        renderDiagnosticsList(result);
+        renderDiagnosticsList(result.diagnostics, result.truncatedDiagnostics);
       }
     };
 
@@ -613,24 +741,46 @@ function mountApp(): void {
       if (file.size > MAX_PREVIEW_BYTES) {
         ++checkEpoch;
         workerClient.cancel();
+        loadedFileBytes = null;
+        isModifiedSinceLoad = false;
+        loadedEncodingInfo = null;
+        lastAssumedEncoding = undefined;
+        lastPreDiagnostics = [];
         validationStatus = { kind: 'too-large', limitMb: 1 };
         updateStatusViews();
         return;
       }
       const fileEpoch = ++checkEpoch;
       try {
-        const text = await file.text();
+        const buffer = await file.arrayBuffer();
         if (fileEpoch !== checkEpoch) {
           return;
         }
-        xmlDraft = text;
-        textarea.value = xmlDraft;
-        await runWorkerCheck(xmlDraft);
+        const bytes = new Uint8Array(buffer);
+        if (bytes.byteLength > MAX_PREVIEW_BYTES) {
+          workerClient.cancel();
+          loadedFileBytes = null;
+          isModifiedSinceLoad = false;
+          loadedEncodingInfo = null;
+          lastAssumedEncoding = undefined;
+          lastPreDiagnostics = [];
+          validationStatus = { kind: 'too-large', limitMb: 1 };
+          updateStatusViews();
+          return;
+        }
+        loadedFileBytes = bytes;
+        isModifiedSinceLoad = false;
+        await decodeAndCheckLoadedBytes(bytes);
       } catch (err: unknown) {
         if (fileEpoch !== checkEpoch) {
           return;
         }
         const detail = err instanceof Error ? err.message : String(err);
+        loadedFileBytes = null;
+        isModifiedSinceLoad = false;
+        loadedEncodingInfo = null;
+        lastAssumedEncoding = undefined;
+        lastPreDiagnostics = [];
         validationStatus = { kind: 'read-error', detail };
         updateStatusViews();
       }
@@ -638,15 +788,27 @@ function mountApp(): void {
 
     sampleBtn.addEventListener('click', () => {
       clearDebounce();
+      loadedFileBytes = null;
+      isModifiedSinceLoad = false;
+      loadedEncodingInfo = null;
+      lastAssumedEncoding = undefined;
+      lastPreDiagnostics = [];
       xmlDraft = t('preview.sampleXml');
       textarea.value = xmlDraft;
-      void runWorkerCheck(xmlDraft);
+      void runWorkerCheck(xmlDraft, { assumedEncoding: 'UTF-8' });
     });
 
     checkBtn.addEventListener('click', () => {
       clearDebounce();
       xmlDraft = textarea.value;
-      void runWorkerCheck(xmlDraft);
+      if (loadedFileBytes !== null && !isModifiedSinceLoad) {
+        void runWorkerCheck(xmlDraft, {
+          ...(lastAssumedEncoding !== undefined ? { assumedEncoding: lastAssumedEncoding } : {}),
+          preDiagnostics: lastPreDiagnostics,
+        });
+      } else {
+        void runWorkerCheck(xmlDraft);
+      }
     });
 
     aboutBtn.addEventListener('click', () => {
