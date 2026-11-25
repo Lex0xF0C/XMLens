@@ -98,6 +98,8 @@ When automated browser execution is unavailable in AI Studio (or before `e2e` CI
    - **ASCII + `encoding="UTF-16"` mismatch:** Open an ASCII/UTF-8 file declaring `encoding="UTF-16"` without BOM; confirm `Auto-detect` fails with the mismatch diagnostic, and switching File encoding to `UTF-8` recovers it.
    - **Blob download & CSP:** Confirm `<a download>` downloads complete in Edge/Chrome and Firefox with **zero** `securitypolicyviolation` or Console CSP errors under `npm run preview`.
    - **Save dialog keyboard flow:** Open **Save as...**, confirm focus lands on the filename input, Tab through all controls, and press `Escape` or **Cancel** to confirm focus returns to the **Save as...** button.
+   - **CRLF offset alignment:** Open a `CRLF` XML file containing an error after several lines; click the diagnostic item and confirm the caret jumps accurately to the error location, and clicking **Check well-formedness** yields identical diagnostics.
+   - **Format & Indent (`ADR-0012`):** Test **Format** with `2 spaces`, `4 spaces`, and `Tab` on compact XML, verify malformed XML leaves text untouched and displays diagnostics, and observe native `Ctrl+Z` undo behavior after `setRangeText` replacement.
 
 ## Decision Requested From Maintainer
 

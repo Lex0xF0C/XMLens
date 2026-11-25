@@ -4,9 +4,11 @@ import {
   decodeXmlBytes,
   isFileDataTransfer,
   loadAndDecodeXmlFile,
+  normalizeDecodedTextForEditor,
   pickFirstDroppedFile,
   utf8ByteLength,
 } from './decodeXml';
+import { getDefaultSavePreferences } from './saveXml';
 
 function asciiBytes(text: string): Uint8Array {
   const out = new Uint8Array(text.length);
@@ -380,5 +382,42 @@ describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
     expect(pickFirstDroppedFile({ types: ['Files'], files: [firstFile, secondFile] })).toBe(
       firstFile,
     );
+  });
+
+  it('normalizes CRLF and standalone CR to LF for consistent diagnostic offsets while preserving CRLF save default', () => {
+    const crlfXml = '<root>\r\n  <a>1</a>\r\n  <b>2</b>\r\n  <bad></root>';
+    const decoded = decodeXmlBytes(asciiBytes(crlfXml), 'auto');
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) {
+      throw new Error('Expected CRLF XML decoding to succeed');
+    }
+
+    const normalized = normalizeDecodedTextForEditor(decoded.text);
+    expect(normalized.lineEnding).toBe('CRLF');
+    expect(normalized.text).toBe('<root>\n  <a>1</a>\n  <b>2</b>\n  <bad></root>');
+
+    // Diagnostic offset computed on normalized text must match LF text (as held by <textarea>.value)
+    // and remain identical on re-check, without shifting by the 3 preceding CRLF `\r` characters.
+    const initialCheck = checkWellFormedness(normalized.text);
+    const recheckFromTextareaLf = checkWellFormedness(normalized.text);
+    expect(initialCheck.wellFormed).toBe(false);
+    expect(initialCheck.diagnostics[0]?.range?.offset).toBe(
+      recheckFromTextareaLf.diagnostics[0]?.range?.offset,
+    );
+    const offset = initialCheck.diagnostics[0]?.range?.offset ?? -1;
+    expect(offset).toBe(normalized.text.length);
+    expect(offset).toBe(crlfXml.length - 3);
+
+    // Save preferences still default to the detected CRLF line ending.
+    const savePrefs = getDefaultSavePreferences(
+      { encoding: decoded.encoding, hasBom: decoded.hasBom },
+      normalized.lineEnding,
+    );
+    expect(savePrefs.lineEnding).toBe('CRLF');
+
+    // Standalone CR line breaks are also normalized to LF.
+    const crOnly = normalizeDecodedTextForEditor('<a>\r  <b/>\r</a>');
+    expect(crOnly.text).toBe('<a>\n  <b/>\n</a>');
+    expect(crOnly.lineEnding).toBe('LF');
   });
 });

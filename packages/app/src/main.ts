@@ -1,9 +1,10 @@
 import {
-  detectLineEnding,
   formatCodeUnitHex,
   formatMessage,
+  formatXml,
   inspectXmlDeclarationForSave,
   type Diagnostic,
+  type IndentStyle,
   type LineEnding,
   type LocaleCode,
   type MessageCatalog,
@@ -17,6 +18,7 @@ import {
   ENCODING_OVERRIDE_OPTIONS,
   isFileDataTransfer,
   loadAndDecodeXmlFile,
+  normalizeDecodedTextForEditor,
   pickFirstDroppedFile,
   utf8ByteLength,
   type DecodeXmlResult,
@@ -103,7 +105,11 @@ function createEl<K extends keyof HTMLElementTagNameMap>(
 
 type ValidationStatus =
   | { readonly kind: 'empty' }
-  | { readonly kind: 'checked'; readonly result: WellFormednessResult }
+  | {
+      readonly kind: 'checked';
+      readonly result: WellFormednessResult;
+      readonly formatRejected?: boolean;
+    }
   | { readonly kind: 'too-large'; readonly limitMb: number }
   | {
       readonly kind: 'decode-error';
@@ -124,6 +130,18 @@ function isEncodingOverride(value: string): value is EncodingOverride {
   return (ENCODING_OVERRIDE_OPTIONS as readonly string[]).includes(value);
 }
 
+function isIndentStyle(value: string): value is IndentStyle {
+  return value === 'spaces-2' || value === 'spaces-4' || value === 'tab';
+}
+
+function replaceTextareaValue(textarea: HTMLTextAreaElement, nextValue: string): void {
+  if (typeof textarea.setRangeText === 'function') {
+    textarea.setRangeText(nextValue, 0, textarea.value.length, 'start');
+  } else {
+    textarea.value = nextValue;
+  }
+}
+
 function mountApp(): void {
   const root = document.getElementById('app');
   if (!root) {
@@ -133,6 +151,7 @@ function mountApp(): void {
   let locale: LocaleCode = detectInitialLocale();
   let theme: ThemeMode = detectInitialTheme();
   let encodingOverride: EncodingOverride = 'auto';
+  let indentStyle: IndentStyle = 'spaces-2';
   let loadedFileBytes: Uint8Array | null = null;
   let loadedFileName: string | null = null;
   let loadedLineEnding: LineEnding = 'LF';
@@ -259,7 +278,10 @@ function mountApp(): void {
       return;
     }
 
-    if (utf8ByteLength(decoded.text) > MAX_PREVIEW_BYTES) {
+    // Detect dominant line ending before normalizing CRLF/CR to LF so xmlDraft, size checks,
+    // worker diagnostic offsets, and <textarea>.value share identical LF coordinates.
+    const normalizedEditor = normalizeDecodedTextForEditor(decoded.text);
+    if (utf8ByteLength(normalizedEditor.text) > MAX_PREVIEW_BYTES) {
       ++checkEpoch;
       workerClient.cancel();
       xmlDraft = '';
@@ -275,9 +297,8 @@ function mountApp(): void {
       return;
     }
 
-    // Detect dominant line ending before assigning into <textarea>, which normalizes CRLF to LF.
-    loadedLineEnding = detectLineEnding(decoded.text);
-    xmlDraft = decoded.text;
+    loadedLineEnding = normalizedEditor.lineEnding;
+    xmlDraft = normalizedEditor.text;
     if (activeTextarea) {
       activeTextarea.value = xmlDraft;
     }
@@ -391,6 +412,12 @@ function mountApp(): void {
       attrs: { type: 'button' },
     });
 
+    const formatBtn = createEl('button', {
+      className: 'tb-btn',
+      text: t('toolbar.format'),
+      attrs: { id: 'format-button', type: 'button' },
+    });
+
     const checkBtn = createEl('button', {
       className: 'tb-btn',
       text: t('toolbar.checkWellFormedness'),
@@ -408,6 +435,7 @@ function mountApp(): void {
       openBtn,
       saveBtn,
       sampleBtn,
+      formatBtn,
       checkBtn,
       createEl('span', { className: 'toolbar-sep', attrs: { 'aria-hidden': 'true' } }),
       aboutBtn,
@@ -514,7 +542,37 @@ function mountApp(): void {
     });
     encodingGroup.append(encodingLabel, encodingSelect);
 
-    settingsGroup.append(encodingGroup, langGroup, themeGroup);
+    const indentGroup = createEl('div', { className: 'control-group' });
+    const indentLabel = createEl('label', {
+      className: 'control-label',
+      text: t('nav.indentStyle'),
+      attrs: { for: 'indent-select' },
+    });
+    const indentSelect = createEl('select', {
+      className: 'tb-select',
+      attrs: { id: 'indent-select' },
+    });
+    const indentOptions: ReadonlyArray<readonly [IndentStyle, string]> = [
+      ['spaces-2', t('indent.spaces2')],
+      ['spaces-4', t('indent.spaces4')],
+      ['tab', t('indent.tab')],
+    ];
+    for (const [styleValue, label] of indentOptions) {
+      const opt = createEl('option', {
+        text: label,
+        attrs: { value: styleValue },
+      });
+      opt.selected = indentStyle === styleValue;
+      indentSelect.appendChild(opt);
+    }
+    indentSelect.addEventListener('change', () => {
+      if (isIndentStyle(indentSelect.value)) {
+        indentStyle = indentSelect.value;
+      }
+    });
+    indentGroup.append(indentLabel, indentSelect);
+
+    settingsGroup.append(encodingGroup, indentGroup, langGroup, themeGroup);
     toolbar.append(actionsGroup, settingsGroup);
     workbench.appendChild(toolbar);
 
@@ -983,10 +1041,13 @@ function mountApp(): void {
           }
         } else {
           resultBox.classList.add('is-invalid');
-          resultBox.textContent = t('preview.invalidCount', {
-            errors: errorCount,
-            warnings: warningCount,
-          });
+          resultBox.textContent = t(
+            validationStatus.formatRejected ? 'preview.formatInvalid' : 'preview.invalidCount',
+            {
+              errors: errorCount,
+              warnings: warningCount,
+            },
+          );
           statusStateField.textContent = t('statusBar.notWellFormed');
         }
         statusCountField.textContent = t('statusBar.elements', { count: result.elementCount });
@@ -1014,6 +1075,57 @@ function mountApp(): void {
       xmlDraft = t('preview.sampleXml');
       textarea.value = xmlDraft;
       void runWorkerCheck(xmlDraft, { assumedEncoding: 'UTF-8' });
+    });
+
+    formatBtn.addEventListener('click', () => {
+      clearDebounce();
+      const currentText = textarea.value;
+      xmlDraft = currentText;
+
+      if (utf8ByteLength(currentText) > MAX_PREVIEW_BYTES) {
+        ++checkEpoch;
+        workerClient.cancel();
+        validationStatus = { kind: 'too-large', limitMb: 1 };
+        updateViewsFn?.();
+        return;
+      }
+
+      const formattedResult = formatXml(currentText, { indentStyle });
+      if (!formattedResult.ok) {
+        ++checkEpoch;
+        workerClient.cancel();
+        validationStatus = {
+          kind: 'checked',
+          formatRejected: true,
+          result: {
+            wellFormed: false,
+            diagnostics: formattedResult.diagnostics,
+            elementCount: formattedResult.elementCount,
+            truncatedDiagnostics: formattedResult.truncatedDiagnostics,
+            ...(formattedResult.rootElement !== undefined
+              ? { rootElement: formattedResult.rootElement }
+              : {}),
+          },
+        };
+        updateViewsFn?.();
+        return;
+      }
+
+      if (formattedResult.changed) {
+        replaceTextareaValue(textarea, formattedResult.formatted);
+        xmlDraft = textarea.value;
+        isModifiedSinceLoad = true;
+        lastAssumedEncoding = undefined;
+        lastPreDiagnostics = [];
+        workerClient.cancel();
+        const scheduledText = xmlDraft;
+        debounceTimer = setTimeout(() => {
+          debounceTimer = null;
+          void runWorkerCheck(scheduledText);
+        }, INPUT_DEBOUNCE_MS);
+      } else if (validationStatus.kind === 'checked' && validationStatus.formatRejected === true) {
+        void runWorkerCheck(xmlDraft);
+      }
     });
 
     checkBtn.addEventListener('click', () => {

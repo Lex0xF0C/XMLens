@@ -1,8 +1,11 @@
 import {
+  convertLineEndings,
+  detectLineEnding,
   detectXmlEncoding,
   normalizeXmlEncodingLabel,
   type Diagnostic,
   type EncodingDetectionSource,
+  type LineEnding,
 } from '@xmlens/core';
 
 export const ENCODING_OVERRIDE_OPTIONS = [
@@ -101,6 +104,23 @@ const sharedUtf8Encoder = new TextEncoder();
  */
 export function utf8ByteLength(text: string): number {
   return sharedUtf8Encoder.encode(text).byteLength;
+}
+
+export interface NormalizedEditorText {
+  readonly text: string;
+  readonly lineEnding: LineEnding;
+}
+
+/**
+ * Detects the dominant line-ending style (`LF` or `CRLF`) from decoded file text
+ * before normalizing all line breaks (`CRLF` and standalone `CR`) to `\n` so
+ * in-memory checks match `<textarea>.value` offsets.
+ */
+export function normalizeDecodedTextForEditor(decodedText: string): NormalizedEditorText {
+  return {
+    text: convertLineEndings(decodedText, 'LF'),
+    lineEnding: detectLineEnding(decodedText),
+  };
 }
 
 /**
@@ -275,7 +295,7 @@ export async function loadAndDecodeXmlFile(
       return { status: 'too-large' };
     }
     const decoded = decodeXmlBytes(bytes, override);
-    if (decoded.ok && utf8ByteLength(decoded.text) > maxBytes) {
+    if (decoded.ok && utf8ByteLength(convertLineEndings(decoded.text, 'LF')) > maxBytes) {
       return { status: 'too-large' };
     }
     return {

@@ -42,3 +42,5 @@ Terms marked **Undecided (未決)** are awaiting final maintainer approval. Do n
 | Encoding              | 文字コード / 文字エンコーディング | **Undecided (未決)** | Character encoding label (`locales/ja.json` provisionally uses 「文字コード」 pending maintainer decision).    |
 | Line ending           | 改行コード                        | **Undecided (未決)** | Line-break convention (`LF` / `CRLF`); provisional translation pending maintainer review (`needs-ja-review`).  |
 | BOM                   | BOM（バイトオーダーマーク）       | **Undecided (未決)** | Unicode Byte Order Mark option in Save dialog; provisional translation pending review (`needs-ja-review`).     |
+| Format                | 整形                              | **Undecided (未決)** | XML pretty-print toolbar action (`ADR-0012`); provisional translation pending review (`needs-ja-review`).      |
+| Indent                | インデント                        | **Undecided (未決)** | Indentation style selector (`2 spaces` / `4 spaces` / `Tab`); provisional translation (`needs-ja-review`).     |

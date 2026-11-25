@@ -73,3 +73,10 @@ export {
   type SaveEncoding,
   type XmlDeclarationSaveCheck,
 } from './xmlExport';
+
+export {
+  formatXml,
+  type FormatXmlOptions,
+  type FormatXmlResult,
+  type IndentStyle,
+} from './formatter';
