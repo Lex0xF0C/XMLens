@@ -356,93 +356,245 @@ function buildAst(tokens: readonly XmlToken[]): readonly AstNode[] {
   return rootChildren;
 }
 
-function renderVerbatimNode(node: AstNode): string {
-  if (node.kind !== 'element') {
-    return node.raw;
+const MAX_FORMATTED_CHARS = 256 * 1024 * 1024;
+
+class FormattedOutputBuffer {
+  private readonly chunks: string[] = [];
+  private totalLength = 0;
+
+  push(chunk: string): void {
+    if (chunk.length === 0) {
+      return;
+    }
+    if (this.totalLength + chunk.length > MAX_FORMATTED_CHARS) {
+      throw new RangeError(
+        `Formatted XML output exceeds safe maximum length (${MAX_FORMATTED_CHARS} characters).`,
+      );
+    }
+    this.chunks.push(chunk);
+    this.totalLength += chunk.length;
   }
-  if (node.closeTag === null) {
-    return node.openTag;
+
+  toString(): string {
+    return this.chunks.join('');
   }
-  return node.openTag + node.children.map(renderVerbatimNode).join('') + node.closeTag;
 }
 
-function formatElementNode(
-  node: ElementNode,
-  depth: number,
-  inheritedPreserve: boolean,
-  indentUnit: string,
-): string {
-  if (node.closeTag === null) {
-    return node.openTag;
-  }
+function createIndentGetter(indentUnit: string): (depth: number) => string {
+  const cache: string[] = [''];
+  return (depth: number): string => {
+    if (depth <= 0) {
+      return '';
+    }
+    const cached = cache[depth];
+    if (cached !== undefined) {
+      return cached;
+    }
+    const prev = cache[depth - 1];
+    const value = prev !== undefined ? prev + indentUnit : indentUnit.repeat(depth);
+    cache[depth] = value;
+    return value;
+  };
+}
 
-  const preserveSpace =
-    node.xmlSpace === 'preserve' ? true : node.xmlSpace === 'default' ? false : inheritedPreserve;
+function appendVerbatimNode(rootNode: AstNode, out: FormattedOutputBuffer): void {
+  const stack: Array<AstNode | string> = [rootNode];
 
-  if (preserveSpace) {
-    let inner = '';
-    for (const child of node.children) {
-      if (child.kind === 'element') {
-        inner += formatElementNode(child, depth + 1, true, indentUnit);
-      } else {
-        inner += child.raw;
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (item === undefined) {
+      continue;
+    }
+    if (typeof item === 'string') {
+      out.push(item);
+      continue;
+    }
+    if (item.kind !== 'element') {
+      out.push(item.raw);
+      continue;
+    }
+    if (item.closeTag === null) {
+      out.push(item.openTag);
+      continue;
+    }
+
+    out.push(item.openTag);
+    stack.push(item.closeTag);
+    for (let i = item.children.length - 1; i >= 0; i -= 1) {
+      const child = item.children[i];
+      if (child !== undefined) {
+        stack.push(child);
       }
     }
-    return node.openTag + inner + node.closeTag;
   }
+}
 
-  const hasTextContent = node.children.some(
-    (c) => (c.kind === 'text' && !c.isWhitespaceOnly) || c.kind === 'cdata',
-  );
-  const hasStructuralChild = node.children.some(
-    (c) => c.kind === 'element' || c.kind === 'comment' || c.kind === 'pi',
-  );
+type FormatStackItem =
+  | { readonly kind: 'textChunk'; readonly text: string }
+  | {
+      readonly kind: 'element';
+      readonly node: ElementNode;
+      readonly depth: number;
+      readonly inheritedPreserve: boolean;
+    };
 
-  // Mixed content (non-whitespace text/CDATA alongside child elements/comments/PIs) or leaf/text-only elements:
-  // preserve inner whitespace verbatim so character data and inline text spacing are never altered.
-  if (hasTextContent || !hasStructuralChild) {
-    return node.openTag + node.children.map(renderVerbatimNode).join('') + node.closeTag;
-  }
+function appendFormattedElement(
+  rootNode: ElementNode,
+  out: FormattedOutputBuffer,
+  getIndent: (depth: number) => string,
+): void {
+  const stack: FormatStackItem[] = [
+    { kind: 'element', node: rootNode, depth: 0, inheritedPreserve: false },
+  ];
 
-  const childDepth = depth + 1;
-  const childIndent = indentUnit.repeat(childDepth);
-  const closingIndent = indentUnit.repeat(depth);
-  const lines: string[] = [];
-
-  for (const child of node.children) {
-    if (child.kind === 'text') {
-      continue; // Inter-element whitespace-only text
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (item === undefined) {
+      continue;
     }
-    const formattedChild =
-      child.kind === 'element'
-        ? formatElementNode(child, childDepth, false, indentUnit)
-        : child.raw;
-    lines.push(childIndent + formattedChild);
-  }
+    if (item.kind === 'textChunk') {
+      out.push(item.text);
+      continue;
+    }
 
-  return `${node.openTag}\n${lines.join('\n')}\n${closingIndent}${node.closeTag}`;
+    const { node, depth, inheritedPreserve } = item;
+    if (node.closeTag === null) {
+      out.push(node.openTag);
+      continue;
+    }
+
+    const preserveSpace =
+      node.xmlSpace === 'preserve' ? true : node.xmlSpace === 'default' ? false : inheritedPreserve;
+
+    if (preserveSpace) {
+      out.push(node.openTag);
+      stack.push({ kind: 'textChunk', text: node.closeTag });
+      for (let i = node.children.length - 1; i >= 0; i -= 1) {
+        const child = node.children[i];
+        if (!child) {
+          continue;
+        }
+        if (child.kind === 'element') {
+          stack.push({
+            kind: 'element',
+            node: child,
+            depth: depth + 1,
+            inheritedPreserve: true,
+          });
+        } else {
+          stack.push({ kind: 'textChunk', text: child.raw });
+        }
+      }
+      continue;
+    }
+
+    let hasTextContent = false;
+    let hasStructuralChild = false;
+    for (let i = 0; i < node.children.length; i += 1) {
+      const child = node.children[i];
+      if (!child) {
+        continue;
+      }
+      if ((child.kind === 'text' && !child.isWhitespaceOnly) || child.kind === 'cdata') {
+        hasTextContent = true;
+      }
+      if (child.kind === 'element' || child.kind === 'comment' || child.kind === 'pi') {
+        hasStructuralChild = true;
+      }
+      if (hasTextContent && hasStructuralChild) {
+        break;
+      }
+    }
+
+    // Mixed content (non-whitespace text/CDATA alongside child elements/comments/PIs) or leaf/text-only elements:
+    // preserve inner whitespace verbatim so character data and inline text spacing are never altered.
+    if (hasTextContent || !hasStructuralChild) {
+      out.push(node.openTag);
+      for (let i = 0; i < node.children.length; i += 1) {
+        const child = node.children[i];
+        if (child) {
+          appendVerbatimNode(child, out);
+        }
+      }
+      out.push(node.closeTag);
+      continue;
+    }
+
+    out.push(node.openTag);
+    out.push('\n');
+    stack.push({ kind: 'textChunk', text: getIndent(depth) + node.closeTag });
+
+    const childDepth = depth + 1;
+    const childIndent = getIndent(childDepth);
+    for (let i = node.children.length - 1; i >= 0; i -= 1) {
+      const child = node.children[i];
+      if (!child || child.kind === 'text') {
+        continue;
+      }
+      stack.push({ kind: 'textChunk', text: '\n' });
+      if (child.kind === 'element') {
+        stack.push({
+          kind: 'element',
+          node: child,
+          depth: childDepth,
+          inheritedPreserve: false,
+        });
+      } else {
+        stack.push({ kind: 'textChunk', text: child.raw });
+      }
+      stack.push({ kind: 'textChunk', text: childIndent });
+    }
+  }
 }
 
 function formatTopLevelNodes(nodes: readonly AstNode[], indentUnit: string): string {
-  let bomPrefix = '';
-  const topItems: string[] = [];
+  const out = new FormattedOutputBuffer();
+  const getIndent = createIndentGetter(indentUnit);
+  let hasEmittedTopItem = false;
 
   for (const node of nodes) {
     if (node.kind === 'bom') {
-      bomPrefix = node.raw;
+      out.push(node.raw);
       continue;
     }
     if (node.kind === 'text' && node.isWhitespaceOnly) {
       continue;
     }
+    if (hasEmittedTopItem) {
+      out.push('\n');
+    }
+    hasEmittedTopItem = true;
     if (node.kind === 'element') {
-      topItems.push(formatElementNode(node, 0, false, indentUnit));
+      appendFormattedElement(node, out, getIndent);
     } else {
-      topItems.push(node.raw);
+      out.push(node.raw);
     }
   }
 
-  return bomPrefix + topItems.join('\n');
+  return out.toString();
+}
+
+function createFormatInternalErrorDiagnostic(detail: string): Diagnostic {
+  return {
+    severity: 'error',
+    code: 'XML_FORMAT_INTERNAL_ERROR',
+    messageKey: 'diagnostics.xml.formatInternalError',
+    params: { detail },
+    range: { line: 1, column: 1, offset: 0 },
+    source: 'core',
+  };
+}
+
+/**
+ * Internal helper exposed only within `packages/core` for benchmarking and stress-testing the
+ * iterative tokenizer/AST/formatter pipeline independently of `saxes` well-formedness checking.
+ * Not re-exported from `@xmlens/core`.
+ */
+export function formatWellFormedXmlUnchecked(text: string, indentStyle?: IndentStyle): string {
+  const indentUnit = resolveIndentUnit(indentStyle);
+  const tokens = tokenizeXmlForFormat(text);
+  const ast = buildAst(tokens);
+  return formatTopLevelNodes(ast, indentUnit);
 }
 
 /**
@@ -452,32 +604,41 @@ function formatTopLevelNodes(nodes: readonly AstNode[], indentUnit: string): str
  * - Uses lossless source slicing so tags, attributes, quotes, unexpanded DTD/character entity references,
  *   comments, CDATA sections, PIs, DOCTYPE subsets, mixed content, and `xml:space="preserve"` subtrees
  *   are preserved verbatim.
+ * - Uses explicit-stack iterative traversal and a `try/catch` guard so deep nesting or unexpected
+ *   `RangeError`s never throw uncaught exceptions.
  * - Outputs LF (`\n`) line endings; CRLF conversion on export is handled by the Save layer.
  */
 export function formatXml(text: string, options?: FormatXmlOptions): FormatXmlResult {
-  const wf = checkWellFormedness(text, options?.wellFormednessOptions);
-  if (!wf.wellFormed) {
+  try {
+    const wf = checkWellFormedness(text, options?.wellFormednessOptions);
+    if (!wf.wellFormed) {
+      return {
+        ok: false,
+        diagnostics: wf.diagnostics,
+        elementCount: wf.elementCount,
+        truncatedDiagnostics: wf.truncatedDiagnostics,
+        ...(wf.rootElement !== undefined ? { rootElement: wf.rootElement } : {}),
+      };
+    }
+
+    const formatted = formatWellFormedXmlUnchecked(text, options?.indentStyle);
+
     return {
-      ok: false,
+      ok: true,
+      formatted,
+      changed: formatted !== text,
       diagnostics: wf.diagnostics,
       elementCount: wf.elementCount,
       truncatedDiagnostics: wf.truncatedDiagnostics,
       ...(wf.rootElement !== undefined ? { rootElement: wf.rootElement } : {}),
     };
+  } catch (err: unknown) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      diagnostics: [createFormatInternalErrorDiagnostic(detail)],
+      elementCount: 0,
+      truncatedDiagnostics: false,
+    };
   }
-
-  const indentUnit = resolveIndentUnit(options?.indentStyle);
-  const tokens = tokenizeXmlForFormat(text);
-  const ast = buildAst(tokens);
-  const formatted = formatTopLevelNodes(ast, indentUnit);
-
-  return {
-    ok: true,
-    formatted,
-    changed: formatted !== text,
-    diagnostics: wf.diagnostics,
-    elementCount: wf.elementCount,
-    truncatedDiagnostics: wf.truncatedDiagnostics,
-    ...(wf.rootElement !== undefined ? { rootElement: wf.rootElement } : {}),
-  };
 }

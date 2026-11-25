@@ -97,6 +97,7 @@
   "diagnostics.xml.externalDtdIgnored": "プライバシーとセキュリティのため、外部 DTD 参照は取得されません。",
   "diagnostics.xml.undeclaredExternalEntity": "実体参照 (&{entity};) は内部で宣言されていません。外部 DTD またはパラメータ実体で定義されている可能性があります（外部参照は取得しません）。",
   "diagnostics.xml.encodingDeclarationNote": "XML 宣言では文字コード \"{declared}\" が指定されていますが、メモリ上のテキストは {assumed} として解析されます。",
+  "diagnostics.xml.formatInternalError": "内部エラーまたは出力サイズ上限のため XML を整形できませんでした: {detail}",
   "diagnostics.encoding.unsupported": "未対応の文字コード \"{encoding}\" です。",
   "diagnostics.encoding.bomConflict": "BOM または先頭バイトパターン ({detected}) と XML 宣言の文字コード \"{declared}\" が矛盾しています。{detected} を優先しました。",
   "diagnostics.encoding.unknownFallback": "文字コード名 \"{requested}\" はこのブラウザで認識できないため、{fallback} で試行します。",

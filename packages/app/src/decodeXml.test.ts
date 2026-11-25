@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { checkWellFormedness } from '@xmlens/core';
 import {
   decodeXmlBytes,
+  formatEditorXml,
   isFileDataTransfer,
   loadAndDecodeXmlFile,
   normalizeDecodedTextForEditor,
@@ -419,5 +420,48 @@ describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
     const crOnly = normalizeDecodedTextForEditor('<a>\r  <b/>\r</a>');
     expect(crOnly.text).toBe('<a>\n  <b/>\n</a>');
     expect(crOnly.lineEnding).toBe('LF');
+  });
+
+  it('forwards assumedEncoding during format failure only when loaded file is unmodified', () => {
+    const invalidShiftJisBytes = concatBytes(
+      asciiBytes('<?xml version="1.0" encoding="Shift_JIS"?><root><bad>'),
+      new Uint8Array([0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea]),
+      asciiBytes('</root>'),
+    );
+    const decoded = decodeXmlBytes(invalidShiftJisBytes, 'auto');
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) {
+      throw new Error('Expected Shift_JIS decode to succeed');
+    }
+
+    const unmodifiedResult = formatEditorXml({
+      text: decoded.text,
+      indentStyle: 'spaces-2',
+      hasLoadedFile: true,
+      isModifiedSinceLoad: false,
+      assumedEncoding: decoded.assumedEncoding,
+    });
+    expect(unmodifiedResult.ok).toBe(false);
+    if (!unmodifiedResult.ok) {
+      expect(unmodifiedResult.diagnostics.some((d) => d.severity === 'error')).toBe(true);
+      expect(
+        unmodifiedResult.diagnostics.some((d) => d.code === 'XML_ENCODING_DECLARATION_NOTE'),
+      ).toBe(false);
+    }
+
+    const modifiedResult = formatEditorXml({
+      text: decoded.text,
+      indentStyle: 'spaces-2',
+      hasLoadedFile: true,
+      isModifiedSinceLoad: true,
+      assumedEncoding: decoded.assumedEncoding,
+    });
+    expect(modifiedResult.ok).toBe(false);
+    if (!modifiedResult.ok) {
+      expect(modifiedResult.diagnostics.some((d) => d.severity === 'error')).toBe(true);
+      expect(
+        modifiedResult.diagnostics.some((d) => d.code === 'XML_ENCODING_DECLARATION_NOTE'),
+      ).toBe(true);
+    }
   });
 });

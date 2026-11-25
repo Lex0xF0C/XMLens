@@ -1,9 +1,9 @@
 import {
   formatCodeUnitHex,
   formatMessage,
-  formatXml,
   inspectXmlDeclarationForSave,
   type Diagnostic,
+  type FormatXmlResult,
   type IndentStyle,
   type LineEnding,
   type LocaleCode,
@@ -16,6 +16,7 @@ import jaCatalog from '../../../locales/ja.json';
 import {
   decodeXmlBytes,
   ENCODING_OVERRIDE_OPTIONS,
+  formatEditorXml,
   isFileDataTransfer,
   loadAndDecodeXmlFile,
   normalizeDecodedTextForEditor,
@@ -1090,7 +1091,24 @@ function mountApp(): void {
         return;
       }
 
-      const formattedResult = formatXml(currentText, { indentStyle });
+      let formattedResult: FormatXmlResult;
+      try {
+        formattedResult = formatEditorXml({
+          text: currentText,
+          indentStyle,
+          hasLoadedFile: loadedFileBytes !== null,
+          isModifiedSinceLoad,
+          ...(lastAssumedEncoding !== undefined ? { assumedEncoding: lastAssumedEncoding } : {}),
+        });
+      } catch (err: unknown) {
+        ++checkEpoch;
+        workerClient.cancel();
+        const detail = err instanceof Error ? err.message : String(err);
+        validationStatus = { kind: 'worker-error', detail };
+        updateViewsFn?.();
+        return;
+      }
+
       if (!formattedResult.ok) {
         ++checkEpoch;
         workerClient.cancel();

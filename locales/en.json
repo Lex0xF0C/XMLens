@@ -97,6 +97,7 @@
   "diagnostics.xml.externalDtdIgnored": "External DTD references are not fetched for privacy and security.",
   "diagnostics.xml.undeclaredExternalEntity": "Entity reference (&{entity};) is not declared internally and may come from an external DTD or parameter entity (not fetched).",
   "diagnostics.xml.encodingDeclarationNote": "XML declaration specifies encoding \"{declared}\", while in-memory text is parsed as {assumed}.",
+  "diagnostics.xml.formatInternalError": "Could not format XML due to an internal error or output size limit: {detail}",
   "diagnostics.encoding.unsupported": "Unsupported character encoding \"{encoding}\".",
   "diagnostics.encoding.bomConflict": "Byte-order mark / pattern ({detected}) differs from XML declaration encoding \"{declared}\"; using {detected}.",
   "diagnostics.encoding.unknownFallback": "Encoding label \"{requested}\" is not recognized by this browser; falling back to {fallback}.",

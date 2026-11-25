@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { formatWellFormedXmlUnchecked } from './formatter';
 import { checkWellFormedness, formatXml } from './index';
 
 describe('formatXml', () => {
@@ -145,6 +146,125 @@ describe('formatXml', () => {
     expect(empty.ok).toBe(false);
     if (!empty.ok) {
       expect(empty.diagnostics[0]?.code).toBe('XML_EMPTY_DOCUMENT');
+    }
+  });
+
+  it('handles deep nesting (1,500 and 5,000 levels) without throwing RangeError', () => {
+    for (const depth of [1500, 5000]) {
+      const deep = `${'<a>'.repeat(depth)}<b/>${'</a>'.repeat(depth)}`;
+      expect(deep.length).toBeLessThan(1024 * 1024);
+
+      const res = formatXml(deep);
+      expect(res.ok).toBe(true);
+      if (!res.ok) {
+        throw new Error(`Expected depth ${depth} formatting to succeed`);
+      }
+      expect(res.elementCount).toBe(depth + 1);
+      expect(res.formatted.startsWith('<a>\n  <a>\n')).toBe(true);
+      expect(res.formatted.endsWith('\n  </a>\n</a>')).toBe(true);
+    }
+  });
+
+  it('handles deep nesting containing xml:space="preserve" and xml:space="default"', () => {
+    const outerDepth = 5000;
+    const innerPreserveDepth = 100;
+    const xml =
+      '<a>'.repeat(outerDepth) +
+      '<pre xml:space="preserve">' +
+      '<b>'.repeat(innerPreserveDepth) +
+      '  <x><y/></x>  ' +
+      '<def xml:space="default"><m><n/></m></def>' +
+      '</b>'.repeat(innerPreserveDepth) +
+      '</pre>' +
+      '</a>'.repeat(outerDepth);
+    expect(xml.length).toBeLessThan(1024 * 1024);
+
+    const res = formatXml(xml);
+    expect(res.ok).toBe(true);
+    if (!res.ok) {
+      throw new Error('Expected deep xml:space formatting to succeed');
+    }
+    expect(res.formatted).toContain(
+      '<pre xml:space="preserve">' + '<b>'.repeat(innerPreserveDepth) + '  <x><y/></x>  ',
+    );
+    expect(res.formatted).toContain('<def xml:space="default">\n');
+  });
+
+  it('handles deep nesting containing mixed-content subtrees verbatim', () => {
+    const outerDepth = 5000;
+    const mixedDepth = 200;
+    const xml =
+      '<a>'.repeat(outerDepth) +
+      '<p>Lead ' +
+      '<span>'.repeat(mixedDepth) +
+      'inline <b>text</b>' +
+      '</span>'.repeat(mixedDepth) +
+      ' tail</p>' +
+      '</a>'.repeat(outerDepth);
+    expect(xml.length).toBeLessThan(1024 * 1024);
+
+    const res = formatXml(xml);
+    expect(res.ok).toBe(true);
+    if (!res.ok) {
+      throw new Error('Expected deep mixed-content formatting to succeed');
+    }
+    expect(res.formatted).toContain(
+      '<p>Lead ' +
+        '<span>'.repeat(mixedDepth) +
+        'inline <b>text</b>' +
+        '</span>'.repeat(mixedDepth) +
+        ' tail</p>',
+    );
+  });
+
+  it('handles 100,000-level nesting in the iterative pipeline and converts RangeError into XML_FORMAT_INTERNAL_ERROR without throwing', () => {
+    const depth100k = 100_000;
+    const preserve100k =
+      '<r xml:space="preserve">' +
+      '<a>'.repeat(depth100k - 1) +
+      '<b/>' +
+      '</a>'.repeat(depth100k - 1) +
+      '</r>';
+    expect(preserve100k.length).toBeLessThan(1024 * 1024);
+
+    // Iterative tokenizer + AST + formatter handles 100,000 levels without call-stack overflow.
+    const preserveOut = formatWellFormedXmlUnchecked(preserve100k);
+    expect(preserveOut).toBe(preserve100k);
+
+    // Unpreserved 100,000-level indentation (~20 GB, exceeding V8 string limits) fails safely with RangeError, not stack overflow or OOM.
+    const container100k = `${'<a>'.repeat(depth100k)}<b/>${'</a>'.repeat(depth100k)}`;
+    expect(container100k.length).toBeLessThan(1024 * 1024);
+    expect(() => formatWellFormedXmlUnchecked(container100k)).toThrow(RangeError);
+
+    // End-to-end formatXml with explicit namespace bindings (avoiding saxes O(D^2) default-ns scan)
+    // succeeds at 59,000 levels under xml:space="preserve" and catches output-size RangeError at 59,000 container levels.
+    const depth59k = 59_000;
+    const nsPreserve59k =
+      '<a xmlns="x" xml:space="preserve">' +
+      '<a xmlns="x">'.repeat(depth59k - 1) +
+      '<b/>' +
+      '</a>'.repeat(depth59k);
+    expect(nsPreserve59k.length).toBeLessThan(1024 * 1024);
+    const ok59k = formatXml(nsPreserve59k);
+    expect(ok59k.ok).toBe(true);
+    if (ok59k.ok) {
+      expect(ok59k.elementCount).toBe(depth59k + 1);
+      expect(ok59k.formatted).toBe(nsPreserve59k);
+    }
+
+    const nsContainer59k = `${'<a xmlns="x">'.repeat(depth59k)}<b/>${'</a>'.repeat(depth59k)}`;
+    expect(nsContainer59k.length).toBeLessThan(1024 * 1024);
+    const capped = formatXml(nsContainer59k);
+    expect(capped.ok).toBe(false);
+    if (!capped.ok) {
+      expect(capped.diagnostics).toHaveLength(1);
+      expect(capped.diagnostics[0]).toMatchObject({
+        severity: 'error',
+        code: 'XML_FORMAT_INTERNAL_ERROR',
+        messageKey: 'diagnostics.xml.formatInternalError',
+        source: 'core',
+      });
+      expect(typeof capped.diagnostics[0]?.params?.detail).toBe('string');
     }
   });
 });

@@ -2,9 +2,12 @@ import {
   convertLineEndings,
   detectLineEnding,
   detectXmlEncoding,
+  formatXml,
   normalizeXmlEncodingLabel,
   type Diagnostic,
   type EncodingDetectionSource,
+  type FormatXmlResult,
+  type IndentStyle,
   type LineEnding,
 } from '@xmlens/core';
 
@@ -334,4 +337,28 @@ export function pickFirstDroppedFile<TFile extends BinaryFileLike>(
     return null;
   }
   return dataTransfer?.files?.[0] ?? null;
+}
+
+export interface FormatEditorXmlContext {
+  readonly text: string;
+  readonly indentStyle: IndentStyle;
+  readonly hasLoadedFile: boolean;
+  readonly isModifiedSinceLoad: boolean;
+  readonly assumedEncoding?: string;
+}
+
+/**
+ * Formats editor text using `formatXml`, forwarding `assumedEncoding` only while the buffer
+ * remains unmodified from disk so failure diagnostics do not emit spurious `XML_ENCODING_DECLARATION_NOTE`.
+ */
+export function formatEditorXml(context: FormatEditorXmlContext): FormatXmlResult {
+  const wellFormednessOptions =
+    context.hasLoadedFile && !context.isModifiedSinceLoad && context.assumedEncoding !== undefined
+      ? { assumedEncoding: context.assumedEncoding }
+      : undefined;
+
+  return formatXml(context.text, {
+    indentStyle: context.indentStyle,
+    ...(wellFormednessOptions !== undefined ? { wellFormednessOptions } : {}),
+  });
 }
