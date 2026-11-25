@@ -226,3 +226,74 @@ export function decodeXmlBytes(bytes: Uint8Array, override: string = 'auto'): De
     };
   }
 }
+
+export interface BinaryFileLike {
+  readonly size: number;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
+export type LoadAndDecodeFileResult =
+  | { readonly status: 'too-large' }
+  | { readonly status: 'read-error'; readonly detail: string }
+  | {
+      readonly status: 'decoded';
+      readonly bytes: Uint8Array;
+      readonly decoded: DecodeXmlResult;
+    };
+
+/**
+ * Shared file-opening pipeline used by both the file picker and drag-and-drop:
+ * checks byte size before reading, reads `ArrayBuffer`, re-checks byte length, and decodes.
+ */
+export async function loadAndDecodeXmlFile(
+  file: BinaryFileLike,
+  maxBytes: number,
+  override: string = 'auto',
+): Promise<LoadAndDecodeFileResult> {
+  if (file.size > maxBytes) {
+    return { status: 'too-large' };
+  }
+
+  try {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    if (bytes.byteLength > maxBytes) {
+      return { status: 'too-large' };
+    }
+    return {
+      status: 'decoded',
+      bytes,
+      decoded: decodeXmlBytes(bytes, override),
+    };
+  } catch (err: unknown) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { status: 'read-error', detail };
+  }
+}
+
+export interface DataTransferLike<TFile extends BinaryFileLike = BinaryFileLike> {
+  readonly types?: ArrayLike<string> | Iterable<string> | null;
+  readonly files?: ArrayLike<TFile> | null;
+}
+
+/**
+ * Returns true only when a drag-and-drop DataTransfer payload advertises file items (`'Files'`).
+ */
+export function isFileDataTransfer(dataTransfer: DataTransferLike | null | undefined): boolean {
+  if (!dataTransfer?.types) {
+    return false;
+  }
+  return Array.from(dataTransfer.types).includes('Files');
+}
+
+/**
+ * Extracts only the first dropped file when `dataTransfer` contains files.
+ */
+export function pickFirstDroppedFile<TFile extends BinaryFileLike>(
+  dataTransfer: DataTransferLike<TFile> | null | undefined,
+): TFile | null {
+  if (!isFileDataTransfer(dataTransfer)) {
+    return null;
+  }
+  return dataTransfer?.files?.[0] ?? null;
+}

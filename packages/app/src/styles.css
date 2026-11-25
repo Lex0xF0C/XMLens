@@ -254,6 +254,11 @@ textarea {
   resize: none;
 }
 
+.xml-textarea.is-drag-over {
+  outline: 1px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 .diagnostics-body {
   flex: 1;
   overflow: auto;

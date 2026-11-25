@@ -44,6 +44,7 @@ XMLens also keeps `packages/core` strictly DOM-free (`"lib": ["ES2022"]`, `eslin
 - **Negative / Limitations:**
   - Only file **opening/decoding** is implemented in M1 stage 2; **saving/exporting** in original or non-UTF-8 encodings is deferred (browsers' native `TextEncoder` only encodes UTF-8).
   - Real-browser verification across Chromium, Firefox, and WebKit has not been run in AI Studio (**unverified**).
+  - **Asymmetric 1 MB preview size check:** File loading enforces the 1 MB (`1,048,576`-byte) cap against raw file bytes (`file.size` / `bytes.byteLength`), whereas `runWorkerCheck` re-checks the decoded string as UTF-8 bytes via `TextEncoder`; a non-UTF-8 file under 1 MB (e.g., 700,007 Shift_JIS bytes) can expand past 1 MB in UTF-8 (1,050,007 bytes) and trigger `preview.tooLarge` after decoding.
 
 ## Alternatives Considered
 

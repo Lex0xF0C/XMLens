@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { checkWellFormedness } from '@xmlens/core';
-import { decodeXmlBytes } from './decodeXml';
+import {
+  decodeXmlBytes,
+  isFileDataTransfer,
+  loadAndDecodeXmlFile,
+  pickFirstDroppedFile,
+} from './decodeXml';
 
 function asciiBytes(text: string): Uint8Array {
   const out = new Uint8Array(text.length);
@@ -196,5 +201,98 @@ describe('decodeXmlBytes', () => {
       expect(check.wellFormed).toBe(true);
       expect(check.diagnostics).toEqual([]);
     }
+  });
+
+  it('pins current auto behavior for ASCII bytes declaring encoding="UTF-16" without BOM/pattern (pending maintainer decision)', () => {
+    // Odd byte length (43 bytes) triggers fatal TextDecoder('utf-16le') failure -> decode-error.
+    const oddAsciiDeclUtf16 = asciiBytes('<?xml version="1.0" encoding="UTF-16"?><r/>');
+    expect(oddAsciiDeclUtf16.byteLength % 2).toBe(1);
+    const oddResult = decodeXmlBytes(oddAsciiDeclUtf16, 'auto');
+    expect(oddResult.ok).toBe(false);
+    if (!oddResult.ok) {
+      expect(oddResult.failureReason).toBe('decode-error');
+      expect(oddResult.encoding).toBe('UTF-16');
+      expect(oddResult.diagnostics.some((d) => d.code === 'XML_DECODE_ERROR')).toBe(true);
+    }
+
+    // Even byte length (44 bytes): WHATWG TextDecoder('UTF-16') maps to 'utf-16le' and decodes
+    // ASCII byte pairs as UTF-16LE code units unless an unpaired surrogate happens to appear.
+    const evenAsciiDeclUtf16 = asciiBytes('<?xml version="1.0" encoding="UTF-16"?><ro/>');
+    expect(evenAsciiDeclUtf16.byteLength % 2).toBe(0);
+    const evenResult = decodeXmlBytes(evenAsciiDeclUtf16, 'auto');
+    expect(evenResult.ok).toBe(true);
+    if (evenResult.ok) {
+      expect(evenResult.encoding).toBe('UTF-16');
+      expect(evenResult.text).not.toContain('<?xml');
+    }
+  });
+});
+
+describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
+  it('enforces size limits before reading and decodes valid files through the shared pipeline', async () => {
+    let arrayBufferCalled = false;
+    const oversizedReported = await loadAndDecodeXmlFile(
+      {
+        size: 1025,
+        arrayBuffer: async () => {
+          arrayBufferCalled = true;
+          return new ArrayBuffer(0);
+        },
+      },
+      1024,
+      'auto',
+    );
+    expect(oversizedReported).toEqual({ status: 'too-large' });
+    expect(arrayBufferCalled).toBe(false);
+
+    const oversizedActual = await loadAndDecodeXmlFile(
+      {
+        size: 10,
+        arrayBuffer: async () => new Uint8Array(1025).buffer,
+      },
+      1024,
+      'auto',
+    );
+    expect(oversizedActual).toEqual({ status: 'too-large' });
+
+    const sjisPayload = concatBytes(
+      asciiBytes('<?xml version="1.0" encoding="Shift_JIS"?><root>'),
+      new Uint8Array([0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea]),
+      asciiBytes('</root>'),
+    );
+    const loaded = await loadAndDecodeXmlFile(
+      {
+        size: sjisPayload.byteLength,
+        arrayBuffer: async () => {
+          const ab = new ArrayBuffer(sjisPayload.byteLength);
+          new Uint8Array(ab).set(sjisPayload);
+          return ab;
+        },
+      },
+      1024,
+      'auto',
+    );
+    expect(loaded.status).toBe('decoded');
+    if (loaded.status === 'decoded') {
+      expect(loaded.decoded.ok).toBe(true);
+      if (loaded.decoded.ok) {
+        expect(loaded.decoded.text).toBe(
+          '<?xml version="1.0" encoding="Shift_JIS"?><root>日本語</root>',
+        );
+      }
+    }
+  });
+
+  it('ignores non-file drags and selects only the first dropped file', () => {
+    const firstFile = { size: 5, arrayBuffer: async () => new Uint8Array(5).buffer };
+    const secondFile = { size: 8, arrayBuffer: async () => new Uint8Array(8).buffer };
+
+    expect(isFileDataTransfer({ types: ['text/plain'], files: [firstFile] })).toBe(false);
+    expect(pickFirstDroppedFile({ types: ['text/plain'], files: [firstFile] })).toBeNull();
+
+    expect(isFileDataTransfer({ types: ['Files'], files: [firstFile, secondFile] })).toBe(true);
+    expect(pickFirstDroppedFile({ types: ['Files'], files: [firstFile, secondFile] })).toBe(
+      firstFile,
+    );
   });
 });

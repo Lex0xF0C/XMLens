@@ -233,6 +233,28 @@ describe('checkWellFormedness', () => {
     });
   });
 
+  it('suppresses XML_ENCODING_DECLARATION_NOTE for equivalent encoding aliases (cp932, euc_jp, ISO-8859-1 vs windows-1252)', () => {
+    const cp932Result = checkWellFormedness('<?xml version="1.0" encoding="cp932"?><doc/>', {
+      assumedEncoding: 'Shift_JIS',
+    });
+    expect(cp932Result.wellFormed).toBe(true);
+    expect(cp932Result.diagnostics).toEqual([]);
+
+    const eucJpResult = checkWellFormedness('<?xml version="1.0" encoding="euc_jp"?><doc/>', {
+      assumedEncoding: 'EUC-JP',
+    });
+    expect(eucJpResult.wellFormed).toBe(true);
+    expect(eucJpResult.diagnostics).toEqual([]);
+
+    // WHATWG Encoding Standard maps iso-8859-1 to windows-1252; when decoded with
+    // windows-1252 override, ISO-8859-1 should not trigger an encoding mismatch note.
+    const latin1Result = checkWellFormedness('<?xml version="1.0" encoding="ISO-8859-1"?><doc/>', {
+      assumedEncoding: 'windows-1252',
+    });
+    expect(latin1Result.wellFormed).toBe(true);
+    expect(latin1Result.diagnostics).toEqual([]);
+  });
+
   it('falls back to XML_SYNTAX_ERROR while preserving detail for unmapped errors', () => {
     const result = checkWellFormedness('<doc><!-- bad -- comment --></doc>');
     expect(result.wellFormed).toBe(false);

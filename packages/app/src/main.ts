@@ -8,7 +8,15 @@ import {
 import { createWellFormednessWorkerClient } from '@xmlens/workers';
 import enCatalog from '../../../locales/en.json';
 import jaCatalog from '../../../locales/ja.json';
-import { decodeXmlBytes, ENCODING_OVERRIDE_OPTIONS, type EncodingOverride } from './decodeXml';
+import {
+  decodeXmlBytes,
+  ENCODING_OVERRIDE_OPTIONS,
+  isFileDataTransfer,
+  loadAndDecodeXmlFile,
+  pickFirstDroppedFile,
+  type DecodeXmlResult,
+  type EncodingOverride,
+} from './decodeXml';
 import './styles.css';
 
 type ThemeMode = 'light' | 'dark' | 'high-contrast';
@@ -210,9 +218,10 @@ function mountApp(): void {
     updateViewsFn?.();
   };
 
-  const decodeAndCheckLoadedBytes = async (bytes: Uint8Array): Promise<void> => {
-    clearDebounce();
-    const decoded = decodeXmlBytes(bytes, encodingOverride);
+  const applyDecodedBytesResult = async (
+    bytes: Uint8Array,
+    decoded: DecodeXmlResult,
+  ): Promise<void> => {
     if (!decoded.ok) {
       ++checkEpoch;
       workerClient.cancel();
@@ -244,6 +253,49 @@ function mountApp(): void {
       assumedEncoding: decoded.assumedEncoding,
       preDiagnostics: decoded.diagnostics,
     });
+  };
+
+  const decodeAndCheckLoadedBytes = async (bytes: Uint8Array): Promise<void> => {
+    clearDebounce();
+    const decoded = decodeXmlBytes(bytes, encodingOverride);
+    await applyDecodedBytesResult(bytes, decoded);
+  };
+
+  const resetLoadedFileState = (): void => {
+    loadedFileBytes = null;
+    isModifiedSinceLoad = false;
+    loadedEncodingInfo = null;
+    lastAssumedEncoding = undefined;
+    lastPreDiagnostics = [];
+  };
+
+  const openXmlFile = async (file: File): Promise<void> => {
+    clearDebounce();
+    const fileEpoch = ++checkEpoch;
+    const outcome = await loadAndDecodeXmlFile(file, MAX_PREVIEW_BYTES, encodingOverride);
+    if (fileEpoch !== checkEpoch) {
+      return;
+    }
+
+    if (outcome.status === 'too-large') {
+      workerClient.cancel();
+      resetLoadedFileState();
+      validationStatus = { kind: 'too-large', limitMb: 1 };
+      updateViewsFn?.();
+      return;
+    }
+
+    if (outcome.status === 'read-error') {
+      workerClient.cancel();
+      resetLoadedFileState();
+      validationStatus = { kind: 'read-error', detail: outcome.detail };
+      updateViewsFn?.();
+      return;
+    }
+
+    loadedFileBytes = outcome.bytes;
+    isModifiedSinceLoad = false;
+    await applyDecodedBytesResult(outcome.bytes, outcome.decoded);
   };
 
   const render = (): void => {
@@ -462,6 +514,41 @@ function mountApp(): void {
         debounceTimer = null;
         void runWorkerCheck(scheduledText);
       }, INPUT_DEBOUNCE_MS);
+    });
+
+    textarea.addEventListener('dragenter', (event) => {
+      if (!isFileDataTransfer(event.dataTransfer)) {
+        return;
+      }
+      event.preventDefault();
+      textarea.classList.add('is-drag-over');
+    });
+
+    textarea.addEventListener('dragover', (event) => {
+      if (!isFileDataTransfer(event.dataTransfer)) {
+        return;
+      }
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = 'copy';
+      }
+      textarea.classList.add('is-drag-over');
+    });
+
+    textarea.addEventListener('dragleave', () => {
+      textarea.classList.remove('is-drag-over');
+    });
+
+    textarea.addEventListener('drop', (event) => {
+      textarea.classList.remove('is-drag-over');
+      const droppedFile = pickFirstDroppedFile(event.dataTransfer);
+      if (!isFileDataTransfer(event.dataTransfer)) {
+        return;
+      }
+      event.preventDefault();
+      if (droppedFile) {
+        void openXmlFile(droppedFile);
+      }
     });
     editorPane.appendChild(textarea);
 
@@ -737,62 +824,12 @@ function mountApp(): void {
       if (!file) {
         return;
       }
-      clearDebounce();
-      if (file.size > MAX_PREVIEW_BYTES) {
-        ++checkEpoch;
-        workerClient.cancel();
-        loadedFileBytes = null;
-        isModifiedSinceLoad = false;
-        loadedEncodingInfo = null;
-        lastAssumedEncoding = undefined;
-        lastPreDiagnostics = [];
-        validationStatus = { kind: 'too-large', limitMb: 1 };
-        updateStatusViews();
-        return;
-      }
-      const fileEpoch = ++checkEpoch;
-      try {
-        const buffer = await file.arrayBuffer();
-        if (fileEpoch !== checkEpoch) {
-          return;
-        }
-        const bytes = new Uint8Array(buffer);
-        if (bytes.byteLength > MAX_PREVIEW_BYTES) {
-          workerClient.cancel();
-          loadedFileBytes = null;
-          isModifiedSinceLoad = false;
-          loadedEncodingInfo = null;
-          lastAssumedEncoding = undefined;
-          lastPreDiagnostics = [];
-          validationStatus = { kind: 'too-large', limitMb: 1 };
-          updateStatusViews();
-          return;
-        }
-        loadedFileBytes = bytes;
-        isModifiedSinceLoad = false;
-        await decodeAndCheckLoadedBytes(bytes);
-      } catch (err: unknown) {
-        if (fileEpoch !== checkEpoch) {
-          return;
-        }
-        const detail = err instanceof Error ? err.message : String(err);
-        loadedFileBytes = null;
-        isModifiedSinceLoad = false;
-        loadedEncodingInfo = null;
-        lastAssumedEncoding = undefined;
-        lastPreDiagnostics = [];
-        validationStatus = { kind: 'read-error', detail };
-        updateStatusViews();
-      }
+      await openXmlFile(file);
     });
 
     sampleBtn.addEventListener('click', () => {
       clearDebounce();
-      loadedFileBytes = null;
-      isModifiedSinceLoad = false;
-      loadedEncodingInfo = null;
-      lastAssumedEncoding = undefined;
-      lastPreDiagnostics = [];
+      resetLoadedFileState();
       xmlDraft = t('preview.sampleXml');
       textarea.value = xmlDraft;
       void runWorkerCheck(xmlDraft, { assumedEncoding: 'UTF-8' });

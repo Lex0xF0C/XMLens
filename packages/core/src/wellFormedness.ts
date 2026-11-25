@@ -1,4 +1,5 @@
 import { SaxesParser } from 'saxes';
+import { normalizeXmlEncodingLabel } from './encoding';
 import type { Diagnostic, SourceRange } from './index';
 
 export interface WellFormednessOptions {
@@ -49,11 +50,17 @@ function clampOffset(position: number, inputLength: number): number {
 }
 
 function normalizeEncodingName(encoding: string): string {
-  const upper = encoding.trim().toUpperCase();
-  if (upper === 'UTF-16LE' || upper === 'UTF-16BE') {
+  const normalized = normalizeXmlEncodingLabel(encoding);
+  if (normalized === 'UTF-16LE' || normalized === 'UTF-16BE') {
     return 'UTF-16';
   }
-  return upper;
+  // In the WHATWG Encoding Standard (used by TextDecoder), iso-8859-1 / latin1 map to
+  // windows-1252. Treating them as equivalent here avoids a false mismatch note when a
+  // user selects "windows-1252" to open an XML document declaring encoding="ISO-8859-1".
+  if (normalized === 'ISO-8859-1') {
+    return 'windows-1252';
+  }
+  return normalized;
 }
 
 interface MappedParserError {
