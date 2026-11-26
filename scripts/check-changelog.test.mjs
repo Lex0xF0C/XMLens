@@ -295,7 +295,7 @@ Includes: DEV-0001 … DEV-0099
     expect(checkChangelog(crlf)).toEqual([]);
   });
 
-  it('ignores headings inside triple-or-more backtick code fences', () => {
+  it('ignores headings inside triple-or-more backtick code fences including nested backticks', () => {
     const withFencedExamples = `# Changelog
 
 ## [Pending]
@@ -313,12 +313,54 @@ Includes: DEV-0001 … DEV-0099
 \`\`\`
 
 \`\`\`\`markdown
+\`\`\`
 ## [DEV-12]
+\`\`\`
 \`\`\`\`
 
 ## [DEV-0001] - Baseline
 `;
     expect(checkChangelog(withFencedExamples)).toEqual([]);
+  });
+
+  it('rejects unclosed code fences reaching EOF', () => {
+    const unclosedTriple = `# Changelog
+
+## [Pending]
+
+(none)
+
+## [DEV-0002] - 2026-11-26
+
+- **Sync:** direct
+
+\`\`\`markdown
+Example without closing fence
+## [Unreleased]
+`;
+    const errors = checkChangelog(unclosedTriple);
+    expect(errors.some((msg) => msg.includes('Unclosed code fence starting at line 11'))).toBe(
+      true,
+    );
+
+    const unclosedQuadClosedByTriple = `# Changelog
+
+## [Pending]
+
+(none)
+
+## [DEV-0002] - 2026-11-26
+
+- **Sync:** direct
+
+\`\`\`\`markdown
+\`\`\`
+## [DEV-0001] - Baseline
+`;
+    const nestedErrors = checkChangelog(unclosedQuadClosedByTriple);
+    expect(
+      nestedErrors.some((msg) => msg.includes('Unclosed code fence starting at line 11')),
+    ).toBe(true);
   });
 
   it('passes against the repository CHANGELOG.md', () => {

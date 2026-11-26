@@ -79,6 +79,7 @@ export function inspectChangelog(text) {
   let currentSection = null;
   let inCodeFence = false;
   let fenceLength = 0;
+  let fenceStartLine = 0;
 
   for (let idx = 0; idx < rawLines.length; idx += 1) {
     const line = rawLines[idx];
@@ -89,6 +90,7 @@ export function inspectChangelog(text) {
       if (closeMatch && closeMatch[1].length >= fenceLength) {
         inCodeFence = false;
         fenceLength = 0;
+        fenceStartLine = 0;
       }
       continue;
     }
@@ -97,6 +99,7 @@ export function inspectChangelog(text) {
     if (openMatch) {
       inCodeFence = true;
       fenceLength = openMatch[1].length;
+      fenceStartLine = lineNumber;
       continue;
     }
 
@@ -113,6 +116,11 @@ export function inspectChangelog(text) {
   }
 
   const errors = [];
+  if (inCodeFence) {
+    errors.push(
+      `Line ${fenceStartLine}: Unclosed code fence starting at line ${fenceStartLine}; headings after it were not validated.`,
+    );
+  }
   let pendingCount = 0;
   const devEntries = [];
   const releaseEntries = [];

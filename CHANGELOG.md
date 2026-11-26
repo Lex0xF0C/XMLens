@@ -7,6 +7,19 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0004] - 2026-11-27
+
+- **Sync:** direct
+- **Refs:** scripts/check-changelog.mjs, scripts/check-changelog.test.mjs, docs/adr/0013-changelog-dev-versioning.md, CHANGELOG.md
+
+### Fixed
+
+- Updated `scripts/check-changelog.mjs` to report an error with the opening line number when a triple-or-more backtick code fence remains unclosed at EOF instead of silently skipping subsequent headings, and added corresponding unit tests in `scripts/check-changelog.test.mjs`.
+
+### Changed
+
+- Updated `docs/adr/0013-changelog-dev-versioning.md` Consequences (reflecting automated validation introduced in `DEV-0003` while noting continued need to re-read `CHANGELOG.md` to avoid number collisions) and appended the `DEV-0004` unclosed code fence check under Follow-up Work (Phase 2).
+
 ## [DEV-0003] - 2026-11-27
 
 - **Sync:** direct

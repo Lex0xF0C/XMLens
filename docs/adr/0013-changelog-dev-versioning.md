@@ -33,7 +33,7 @@ XMLens is developed through Google AI Studio with direct synchronization to `mai
 ## Consequences
 
 - **Positive:** Clear, monotonic audit trail for every `main` sync without polluting `vX.Y.Z` product releases; preserves pre-policy history intact in `DEV-0001`; accommodates both direct AI Studio syncs and PR contributions cleanly.
-- **Negative / Maintenance:** Requires contributors and agents to check the latest `CHANGELOG.md` before adding entries to avoid number collisions or duplicate descriptions until automated validation is added.
+- **Negative / Maintenance:** Automated validation of formatting, ordering, dates, metadata, and release `Includes:` ranges is enforced by `scripts/check-changelog.mjs` (`npm run changelog:check`, introduced in `DEV-0003`); however, contributors and agents must still re-read the latest `CHANGELOG.md` before editing to prevent `DEV-NNNN` number collisions and duplicate descriptions.
 
 ## Alternatives Considered
 
@@ -50,3 +50,5 @@ Implemented in `DEV-0003` via `scripts/check-changelog.mjs` (unit-tested in `scr
 4. Valid calendar `YYYY-MM-DD`, `YYYY-MM-DD (UTC)`, or `date-unknown` on `DEV-0002+` headings, while permitting `DEV-0001 - Baseline` without a date.
 5. Non-empty `- **Sync:** <value>` metadata on every `DEV-0002+` entry.
 6. Non-empty, valid `Includes: DEV-xxxx … DEV-yyyy` (accepting `…`, `...`, `-`, or single `DEV-xxxx`, with `start <= end` and existing DEV endpoints) on `## [vX.Y.Z]` release headings.
+
+- Additional structural check (added in `DEV-0004`): rejects unclosed triple-or-more backtick code fences at EOF with the opening line number so subsequent headings are not silently skipped.
