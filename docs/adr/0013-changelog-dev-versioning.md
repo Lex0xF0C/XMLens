@@ -40,6 +40,13 @@ XMLens is developed through Google AI Studio with direct synchronization to `mai
 - **Date + sequence versioning (`YYYY.MM.DD-NN`, e.g., `2026.11.26-01`):** Rejected because it visually resembles CalVer product releases and introduces ordering ambiguity across contributor timezones.
 - **Keep a Changelog standard (`[Unreleased]` only):** Rejected because direct-to-main syncs without frequent releases cause `[Unreleased]` to grow unboundedly without provenance boundaries.
 
-## Follow-up Work (Phase 2)
+## Follow-up Work (Phase 2 — Implemented in `DEV-0003`)
 
-- Add `scripts/check-changelog.mjs` (not implemented in this ADR) to validate `DEV-NNNN` monotonicity, heading structure, `[Pending]` formatting, and absence of accidental mutations to historical `DEV-NNNN` entries in CI.
+Implemented in `DEV-0003` via `scripts/check-changelog.mjs` (unit-tested in `scripts/check-changelog.test.mjs`, exposed as `npm run changelog:check`, and integrated into `npm run check`). The cross-platform Node script ignores triple-or-more backtick code fences, normalizes `CRLF` line endings, and validates all six rules:
+
+1. Unique 4-digit zero-padded `## [DEV-NNNN]` identifiers (rejecting malformed forms such as `DEV-12`).
+2. Strictly descending `DEV-NNNN` ordering from top to bottom (unaffected by interleaved `## [vX.Y.Z]` release headings).
+3. Absence of `## [Unreleased]` and presence of `## [Pending]`.
+4. Valid calendar `YYYY-MM-DD`, `YYYY-MM-DD (UTC)`, or `date-unknown` on `DEV-0002+` headings, while permitting `DEV-0001 - Baseline` without a date.
+5. Non-empty `- **Sync:** <value>` metadata on every `DEV-0002+` entry.
+6. Non-empty, valid `Includes: DEV-xxxx … DEV-yyyy` (accepting `…`, `...`, `-`, or single `DEV-xxxx`, with `start <= end` and existing DEV endpoints) on `## [vX.Y.Z]` release headings.

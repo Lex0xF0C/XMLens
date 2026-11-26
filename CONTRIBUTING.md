@@ -30,7 +30,7 @@ Thank you for contributing to XMLens! Please read [`AGENTS.md`](./AGENTS.md) and
 
 Before opening a PR:
 
-- Run `npm run check` (runs `lint`, `format:check`, `typecheck`, `test`, `i18n:check`, `plugins:guard`, `license:check`, and `notices:check`) and `npm run build`.
+- Run `npm run check` (runs `lint`, `format:check`, `typecheck`, `test`, `i18n:check`, `plugins:guard`, `license:check`, `notices:check`, and `changelog:check`) and `npm run build`.
 - Include in your PR description: summary, linked issue, test evidence, screenshots in both `en` and `ja` for UI changes, and dependency/license notes if `package.json` changed.
 - Update `docs/feature-matrix.md` and user docs (`en` + `ja`) when features change.
 - Update `CHANGELOG.md` under `[Pending]` (without assigning a `DEV-NNNN` number) in the same change for every code, documentation, or configuration change; the merging maintainer (or `main` sync) assigns the next `DEV-NNNN` number upon integration (see `AGENTS.md` §12 and `docs/adr/0013-changelog-dev-versioning.md`).

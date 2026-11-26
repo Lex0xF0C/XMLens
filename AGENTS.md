@@ -47,7 +47,8 @@ npm run plugins:guard  # fails on disallowed Saxon/xslt3 paths, dependencies, or
 npm run license:check  # fails on disallowed or unverified dependency licenses
 npm run notices:generate # generates THIRD_PARTY_NOTICES.md and packages/app/public/THIRD_PARTY_NOTICES.md
 npm run notices:check  # verifies committed notices match runtime dependencies
-npm run check          # lint + format:check + typecheck + test + i18n:check + plugins:guard + license:check + notices:check
+npm run changelog:check # verifies CHANGELOG.md conforms to ADR-0013 / §12 rules
+npm run check          # lint + format:check + typecheck + test + i18n:check + plugins:guard + license:check + notices:check + changelog:check
 ```
 
 Before declaring any task done, run `npm run check` (and `npm run test:e2e` if UI changed). Report what you ran and the result. If you could not run something, say so explicitly. Do not claim success without evidence.
@@ -194,7 +195,7 @@ A change is done only when:
 - [ ] No new network calls, no CSP loosening, no disallowed licenses
 - [ ] No SaxonJS/`xslt3` file in the workspace or git; `package.json` and lockfile unchanged in that respect; repository guard passes
 - [ ] Docs and feature matrix updated (en + ja where user-facing)
-- [ ] `CHANGELOG.md` updated per §12 (`DEV-NNNN` on direct sync, or `[Pending]` in PRs) for any code, documentation, or configuration change
+- [ ] `CHANGELOG.md` updated per §12 (`DEV-NNNN` on direct sync, or `[Pending]` in PRs) for any code, documentation, or configuration change, and `npm run changelog:check` passes
 - [ ] Risks, limitations, and unverified assumptions are stated in the PR description
 - [ ] No engine directly accesses IndexedDB, file storage, or external network URLs (uses Resource Resolver / `ResourceBundle`)
 

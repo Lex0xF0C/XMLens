@@ -7,6 +7,22 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0003] - 2026-11-27
+
+- **Sync:** direct
+- **Refs:** ADR-0013, scripts/check-changelog.mjs, scripts/check-changelog.test.mjs, package.json, AGENTS.md, README.md, README.ja.md, CONTRIBUTING.md, docs/adr/0013-changelog-dev-versioning.md, CHANGELOG.md
+
+### Added
+
+- Implemented cross-platform changelog consistency checker `scripts/check-changelog.mjs` (`checkChangelog` / `inspectChangelog` and CLI entrypoint) enforcing `ADR-0013` / `AGENTS.md` §12 rules (4-digit `DEV-NNNN` uniqueness and format, strict descending order across release headings, `[Pending]` required / `[Unreleased]` forbidden, calendar-valid dates / `(UTC)` / `date-unknown` with `DEV-0001` Baseline exemption, non-empty `- **Sync:**` metadata, and `## [vX.Y.Z]` `Includes:` range validation while ignoring fenced code blocks and normalizing `CRLF`).
+- Added Vitest suite `scripts/check-changelog.test.mjs` covering valid/invalid cases for all six rules, `CRLF` normalization, fenced-heading exclusion, `DEV-0001` Baseline handling, and validation against the repository's own `CHANGELOG.md`.
+- Added `"changelog:check": "node scripts/check-changelog.mjs"` to `package.json` and wired it into `npm run check`.
+
+### Changed
+
+- Updated `AGENTS.md` (§2 command reference and §10 Definition of done), `README.md`, `README.ja.md`, and `CONTRIBUTING.md` to include `npm run changelog:check` in `npm run check`.
+- Updated `docs/adr/0013-changelog-dev-versioning.md` Follow-up Work (Phase 2) section to document `scripts/check-changelog.mjs` and its six implemented checks under `DEV-0003` while keeping `Status: Accepted`.
+
 ## [DEV-0002] - 2026-11-26
 
 - **Sync:** direct

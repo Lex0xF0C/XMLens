@@ -22,7 +22,7 @@ XMLens は、XML 文書の編集・検証・クエリ・変換・比較・構造
 ```bash
 npm ci             # package-lock.json に基づき依存関係をインストール
 npm run dev        # Vite 開発サーバを起動 (http://localhost:3000)
-npm run check      # lint / format:check / typecheck / test / i18n:check / plugins:guard / license:check / notices:check を実行
+npm run check      # lint / format:check / typecheck / test / i18n:check / plugins:guard / license:check / notices:check / changelog:check を実行
 npm run build      # dist/ に静的プロダクションビルドを出力
 npm run preview    # プロダクションビルドをローカルでプレビュー
 ```
