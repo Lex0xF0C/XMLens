@@ -75,6 +75,7 @@ export {
 } from './xmlExport';
 
 export {
+  FormatOutputLimitError,
   formatXml,
   type FormatXmlOptions,
   type FormatXmlResult,

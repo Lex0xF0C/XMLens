@@ -6,6 +6,8 @@ export type IndentStyle = 'spaces-2' | 'spaces-4' | 'tab';
 export interface FormatXmlOptions {
   /** Indentation style per nesting level (default: `'spaces-2'`). */
   readonly indentStyle?: IndentStyle;
+  /** Maximum formatted output length in UTF-16 code units (default: 256 MiB characters). */
+  readonly maxOutputChars?: number;
   /** Optional well-formedness check options forwarded to `checkWellFormedness`. */
   readonly wellFormednessOptions?: WellFormednessOptions;
 }
@@ -358,18 +360,42 @@ function buildAst(tokens: readonly XmlToken[]): readonly AstNode[] {
 
 const MAX_FORMATTED_CHARS = 256 * 1024 * 1024;
 
+/**
+ * Thrown internally when formatted XML output exceeds `maxOutputChars`.
+ * Extends `RangeError` so callers expecting `RangeError` on size overflow remain compatible.
+ */
+export class FormatOutputLimitError extends RangeError {
+  readonly limit: number;
+
+  constructor(limit: number) {
+    super(`Formatted XML output exceeds safe maximum length (${limit} characters).`);
+    this.name = 'FormatOutputLimitError';
+    this.limit = limit;
+  }
+}
+
+function resolveMaxOutputChars(raw: number | undefined): number {
+  if (raw === undefined || !Number.isFinite(raw) || raw < 0) {
+    return MAX_FORMATTED_CHARS;
+  }
+  return Math.floor(raw);
+}
+
 class FormattedOutputBuffer {
   private readonly chunks: string[] = [];
   private totalLength = 0;
+  private readonly maxOutputChars: number;
+
+  constructor(maxOutputChars: number = MAX_FORMATTED_CHARS) {
+    this.maxOutputChars = maxOutputChars;
+  }
 
   push(chunk: string): void {
     if (chunk.length === 0) {
       return;
     }
-    if (this.totalLength + chunk.length > MAX_FORMATTED_CHARS) {
-      throw new RangeError(
-        `Formatted XML output exceeds safe maximum length (${MAX_FORMATTED_CHARS} characters).`,
-      );
+    if (this.totalLength + chunk.length > this.maxOutputChars) {
+      throw new FormatOutputLimitError(this.maxOutputChars);
     }
     this.chunks.push(chunk);
     this.totalLength += chunk.length;
@@ -547,8 +573,12 @@ function appendFormattedElement(
   }
 }
 
-function formatTopLevelNodes(nodes: readonly AstNode[], indentUnit: string): string {
-  const out = new FormattedOutputBuffer();
+function formatTopLevelNodes(
+  nodes: readonly AstNode[],
+  indentUnit: string,
+  maxOutputChars: number,
+): string {
+  const out = new FormattedOutputBuffer(maxOutputChars);
   const getIndent = createIndentGetter(indentUnit);
   let hasEmittedTopItem = false;
 
@@ -585,16 +615,32 @@ function createFormatInternalErrorDiagnostic(detail: string): Diagnostic {
   };
 }
 
+function createFormatOutputTooLargeDiagnostic(limit: number, detail: string): Diagnostic {
+  return {
+    severity: 'error',
+    code: 'XML_FORMAT_OUTPUT_TOO_LARGE',
+    messageKey: 'diagnostics.xml.formatOutputTooLarge',
+    params: { limit, detail },
+    range: { line: 1, column: 1, offset: 0 },
+    source: 'core',
+  };
+}
+
 /**
  * Internal helper exposed only within `packages/core` for benchmarking and stress-testing the
  * iterative tokenizer/AST/formatter pipeline independently of `saxes` well-formedness checking.
  * Not re-exported from `@xmlens/core`.
  */
-export function formatWellFormedXmlUnchecked(text: string, indentStyle?: IndentStyle): string {
+export function formatWellFormedXmlUnchecked(
+  text: string,
+  indentStyle?: IndentStyle,
+  maxOutputChars?: number,
+): string {
   const indentUnit = resolveIndentUnit(indentStyle);
+  const resolvedLimit = resolveMaxOutputChars(maxOutputChars);
   const tokens = tokenizeXmlForFormat(text);
   const ast = buildAst(tokens);
-  return formatTopLevelNodes(ast, indentUnit);
+  return formatTopLevelNodes(ast, indentUnit, resolvedLimit);
 }
 
 /**
@@ -621,7 +667,11 @@ export function formatXml(text: string, options?: FormatXmlOptions): FormatXmlRe
       };
     }
 
-    const formatted = formatWellFormedXmlUnchecked(text, options?.indentStyle);
+    const formatted = formatWellFormedXmlUnchecked(
+      text,
+      options?.indentStyle,
+      options?.maxOutputChars,
+    );
 
     return {
       ok: true,
@@ -633,6 +683,14 @@ export function formatXml(text: string, options?: FormatXmlOptions): FormatXmlRe
       ...(wf.rootElement !== undefined ? { rootElement: wf.rootElement } : {}),
     };
   } catch (err: unknown) {
+    if (err instanceof FormatOutputLimitError) {
+      return {
+        ok: false,
+        diagnostics: [createFormatOutputTooLargeDiagnostic(err.limit, err.message)],
+        elementCount: 0,
+        truncatedDiagnostics: false,
+      };
+    }
     const detail = err instanceof Error ? err.message : String(err);
     return {
       ok: false,

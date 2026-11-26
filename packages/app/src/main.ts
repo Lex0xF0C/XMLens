@@ -3,7 +3,6 @@ import {
   formatMessage,
   inspectXmlDeclarationForSave,
   type Diagnostic,
-  type FormatXmlResult,
   type IndentStyle,
   type LineEnding,
   type LocaleCode,
@@ -14,13 +13,16 @@ import { createWellFormednessWorkerClient } from '@xmlens/workers';
 import enCatalog from '../../../locales/en.json';
 import jaCatalog from '../../../locales/ja.json';
 import {
+  classifyFormatFailure,
   decodeXmlBytes,
   ENCODING_OVERRIDE_OPTIONS,
-  formatEditorXml,
+  enforceFormattedByteLimit,
   isFileDataTransfer,
   loadAndDecodeXmlFile,
   normalizeDecodedTextForEditor,
   pickFirstDroppedFile,
+  resolveFormatWorkerOptions,
+  shouldDiscardAsyncFormatResult,
   utf8ByteLength,
   type DecodeXmlResult,
   type EncodingOverride,
@@ -120,7 +122,13 @@ type ValidationStatus =
     }
   | { readonly kind: 'read-error'; readonly detail: string }
   | { readonly kind: 'worker-timeout' }
-  | { readonly kind: 'worker-error'; readonly detail: string };
+  | { readonly kind: 'worker-error'; readonly detail: string }
+  | {
+      readonly kind: 'format-failed';
+      readonly reason: 'output-too-large' | 'internal-error';
+      readonly detail?: string;
+      readonly diagnostics: readonly Diagnostic[];
+    };
 
 interface LoadedEncodingInfo {
   readonly encoding: string;
@@ -1018,6 +1026,15 @@ function mountApp(): void {
         });
         statusStateField.textContent = t('statusBar.notWellFormed');
         statusCountField.textContent = t('statusBar.elements', { count: 0 });
+      } else if (validationStatus.kind === 'format-failed') {
+        resultBox.classList.add('is-invalid');
+        resultBox.textContent =
+          validationStatus.reason === 'output-too-large'
+            ? t('preview.formatOutputTooLarge', { limitMb: 1 })
+            : t('preview.formatError', { detail: validationStatus.detail ?? '' });
+        statusStateField.textContent = t('statusBar.formatFailed');
+        statusCountField.textContent = t('statusBar.elements', { count: 0 });
+        renderDiagnosticsList(validationStatus.diagnostics, false);
       } else {
         const { result } = validationStatus;
         const errorCount = result.diagnostics.filter((d) => d.severity === 'error').length;
@@ -1078,12 +1095,13 @@ function mountApp(): void {
       void runWorkerCheck(xmlDraft, { assumedEncoding: 'UTF-8' });
     });
 
-    formatBtn.addEventListener('click', () => {
+    formatBtn.addEventListener('click', async () => {
       clearDebounce();
-      const currentText = textarea.value;
-      xmlDraft = currentText;
+      const targetAtStart = activeTextarea ?? textarea;
+      const sentText = targetAtStart.value;
+      xmlDraft = sentText;
 
-      if (utf8ByteLength(currentText) > MAX_PREVIEW_BYTES) {
+      if (utf8ByteLength(sentText) > MAX_PREVIEW_BYTES) {
         ++checkEpoch;
         workerClient.cancel();
         validationStatus = { kind: 'too-large', limitMb: 1 };
@@ -1091,57 +1109,127 @@ function mountApp(): void {
         return;
       }
 
-      let formattedResult: FormatXmlResult;
-      try {
-        formattedResult = formatEditorXml({
-          text: currentText,
-          indentStyle,
-          hasLoadedFile: loadedFileBytes !== null,
-          isModifiedSinceLoad,
-          ...(lastAssumedEncoding !== undefined ? { assumedEncoding: lastAssumedEncoding } : {}),
-        });
-      } catch (err: unknown) {
-        ++checkEpoch;
-        workerClient.cancel();
-        const detail = err instanceof Error ? err.message : String(err);
-        validationStatus = { kind: 'worker-error', detail };
-        updateViewsFn?.();
-        return;
-      }
+      const formatEpoch = ++checkEpoch;
+      const formatWasUnmodifiedFile = loadedFileBytes !== null && !isModifiedSinceLoad;
+      const formatAssumedEncoding = lastAssumedEncoding;
+      const formatPreDiagnostics = lastPreDiagnostics;
+      setCheckingStateFn?.();
 
-      if (!formattedResult.ok) {
-        ++checkEpoch;
-        workerClient.cancel();
+      const formatOptions = resolveFormatWorkerOptions({
+        indentStyle,
+        hasLoadedFile: loadedFileBytes !== null,
+        isModifiedSinceLoad,
+        maxOutputChars: MAX_PREVIEW_BYTES,
+        ...(formatAssumedEncoding !== undefined ? { assumedEncoding: formatAssumedEncoding } : {}),
+      });
+
+      let outcome;
+      try {
+        outcome = await workerClient.format(sentText, formatOptions);
+      } catch (err: unknown) {
+        if (
+          shouldDiscardAsyncFormatResult({
+            requestEpoch: formatEpoch,
+            currentEpoch: checkEpoch,
+            sentText,
+            currentTextareaValue: activeTextarea?.value ?? xmlDraft,
+          })
+        ) {
+          return;
+        }
+        const detail = err instanceof Error ? err.message : String(err);
         validationStatus = {
-          kind: 'checked',
-          formatRejected: true,
-          result: {
-            wellFormed: false,
-            diagnostics: formattedResult.diagnostics,
-            elementCount: formattedResult.elementCount,
-            truncatedDiagnostics: formattedResult.truncatedDiagnostics,
-            ...(formattedResult.rootElement !== undefined
-              ? { rootElement: formattedResult.rootElement }
-              : {}),
-          },
+          kind: 'format-failed',
+          reason: 'internal-error',
+          detail,
+          diagnostics: [],
         };
         updateViewsFn?.();
         return;
       }
 
+      if (
+        outcome.status === 'cancelled' ||
+        shouldDiscardAsyncFormatResult({
+          requestEpoch: formatEpoch,
+          currentEpoch: checkEpoch,
+          sentText,
+          currentTextareaValue: activeTextarea?.value ?? xmlDraft,
+        })
+      ) {
+        return;
+      }
+
+      if (outcome.status === 'timeout') {
+        validationStatus = {
+          kind: 'format-failed',
+          reason: 'internal-error',
+          detail: t('preview.workerTimeout'),
+          diagnostics: [],
+        };
+        updateViewsFn?.();
+        return;
+      }
+
+      if (outcome.status === 'error') {
+        validationStatus = {
+          kind: 'format-failed',
+          reason: 'internal-error',
+          detail: outcome.message,
+          diagnostics: [],
+        };
+        updateViewsFn?.();
+        return;
+      }
+
+      const formattedResult = enforceFormattedByteLimit(outcome.result, MAX_PREVIEW_BYTES);
+      if (!formattedResult.ok) {
+        const failureReason = classifyFormatFailure(formattedResult.diagnostics);
+        if (failureReason === 'invalid') {
+          validationStatus = {
+            kind: 'checked',
+            formatRejected: true,
+            result: {
+              wellFormed: false,
+              diagnostics: formattedResult.diagnostics,
+              elementCount: formattedResult.elementCount,
+              truncatedDiagnostics: formattedResult.truncatedDiagnostics,
+              ...(formattedResult.rootElement !== undefined
+                ? { rootElement: formattedResult.rootElement }
+                : {}),
+            },
+          };
+        } else {
+          const rawDetail = formattedResult.diagnostics[0]?.params?.detail;
+          const detail =
+            typeof rawDetail === 'string' && rawDetail.length > 0 ? rawDetail : undefined;
+          validationStatus = {
+            kind: 'format-failed',
+            reason: failureReason,
+            ...(detail !== undefined ? { detail } : {}),
+            diagnostics: formattedResult.diagnostics,
+          };
+        }
+        updateViewsFn?.();
+        return;
+      }
+
       if (formattedResult.changed) {
-        replaceTextareaValue(textarea, formattedResult.formatted);
-        xmlDraft = textarea.value;
+        const targetTextarea = activeTextarea ?? textarea;
+        replaceTextareaValue(targetTextarea, formattedResult.formatted);
+        xmlDraft = targetTextarea.value;
         isModifiedSinceLoad = true;
         lastAssumedEncoding = undefined;
         lastPreDiagnostics = [];
-        workerClient.cancel();
-        const scheduledText = xmlDraft;
-        debounceTimer = setTimeout(() => {
-          debounceTimer = null;
-          void runWorkerCheck(scheduledText);
-        }, INPUT_DEBOUNCE_MS);
-      } else if (validationStatus.kind === 'checked' && validationStatus.formatRejected === true) {
+        void runWorkerCheck(xmlDraft);
+      } else if (formatWasUnmodifiedFile) {
+        void runWorkerCheck(xmlDraft, {
+          ...(formatAssumedEncoding !== undefined
+            ? { assumedEncoding: formatAssumedEncoding }
+            : {}),
+          preDiagnostics: formatPreDiagnostics,
+        });
+      } else {
         void runWorkerCheck(xmlDraft);
       }
     });

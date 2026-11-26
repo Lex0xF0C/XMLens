@@ -1,8 +1,10 @@
-import type { WellFormednessOptions, WellFormednessResult } from '@xmlens/core';
+import type { FormatXmlResult, WellFormednessOptions, WellFormednessResult } from '@xmlens/core';
 import {
   isWorkerResponse,
   WORKER_PROTOCOL_VERSION,
   type CheckWellFormednessRequest,
+  type FormatXmlRequest,
+  type FormatXmlWorkerOptions,
 } from './protocol';
 
 export interface WorkerMessageEventLike {
@@ -30,21 +32,37 @@ export type WorkerCallResult =
   | { readonly status: 'timeout' }
   | { readonly status: 'error'; readonly message: string };
 
+export type WorkerFormatCallResult =
+  | { readonly status: 'ok'; readonly result: FormatXmlResult }
+  | { readonly status: 'cancelled' }
+  | { readonly status: 'timeout' }
+  | { readonly status: 'error'; readonly message: string };
+
+export interface WorkerFormatCallOptions {
+  readonly timeoutMs?: number;
+}
+
 export interface WellFormednessWorkerClientOptions {
   readonly timeoutMs?: number;
 }
 
 export interface WellFormednessWorkerClient {
   check(xml: string, options?: WellFormednessOptions): Promise<WorkerCallResult>;
+  format(
+    text: string,
+    options?: FormatXmlWorkerOptions,
+    callOptions?: WorkerFormatCallOptions,
+  ): Promise<WorkerFormatCallResult>;
   cancel(): void;
   dispose(): void;
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
+export const DEFAULT_FORMAT_TIMEOUT_MS = 15_000;
 
 /**
- * Creates a main-thread RPC client for well-formedness checks with request-id matching,
- * cancellation (terminating and respawning the worker), and timeout enforcement.
+ * Creates a main-thread RPC client for well-formedness checks and XML formatting with request-id
+ * matching, cancellation (terminating and respawning the worker), and timeout enforcement.
  */
 export function createWellFormednessWorkerClient(
   spawnWorker: () => WorkerLike,
@@ -56,11 +74,19 @@ export function createWellFormednessWorkerClient(
   let nextRequestId = 1;
   let disposed = false;
 
-  interface PendingRequest {
-    readonly id: number;
-    readonly timer: ReturnType<typeof setTimeout>;
-    readonly resolve: (value: WorkerCallResult) => void;
-  }
+  type PendingRequest =
+    | {
+        readonly kind: 'checkWellFormedness';
+        readonly id: number;
+        readonly timer: ReturnType<typeof setTimeout>;
+        readonly resolve: (value: WorkerCallResult) => void;
+      }
+    | {
+        readonly kind: 'formatXml';
+        readonly id: number;
+        readonly timer: ReturnType<typeof setTimeout>;
+        readonly resolve: (value: WorkerFormatCallResult) => void;
+      };
 
   let pending: PendingRequest | null = null;
 
@@ -75,7 +101,13 @@ export function createWellFormednessWorkerClient(
     worker = null;
   };
 
-  const settlePending = (expectedId: number, outcome: WorkerCallResult): void => {
+  const settlePendingFailure = (
+    expectedId: number,
+    outcome:
+      | { readonly status: 'cancelled' }
+      | { readonly status: 'timeout' }
+      | { readonly status: 'error'; readonly message: string },
+  ): void => {
     if (!pending || pending.id !== expectedId) {
       return;
     }
@@ -93,18 +125,36 @@ export function createWellFormednessWorkerClient(
     if (!pending || event.data.id !== pending.id) {
       return;
     }
-    if (event.data.ok) {
-      settlePending(event.data.id, { status: 'ok', result: event.data.result });
-    } else {
-      settlePending(event.data.id, { status: 'error', message: event.data.error.message });
+    if (!event.data.ok) {
+      settlePendingFailure(event.data.id, { status: 'error', message: event.data.error.message });
+      return;
     }
+
+    const current = pending;
+    if (current.kind === 'checkWellFormedness' && event.data.type === 'checkWellFormedness') {
+      pending = null;
+      clearTimeout(current.timer);
+      current.resolve({ status: 'ok', result: event.data.result });
+      return;
+    }
+    if (current.kind === 'formatXml' && event.data.type === 'formatXml') {
+      pending = null;
+      clearTimeout(current.timer);
+      current.resolve({ status: 'ok', result: event.data.result });
+      return;
+    }
+
+    settlePendingFailure(event.data.id, {
+      status: 'error',
+      message: 'Mismatched worker response type.',
+    });
   };
 
   const onError = (event: WorkerErrorEventLike): void => {
     const activeId = pending?.id;
     detachAndTerminateWorker();
     if (activeId !== undefined) {
-      settlePending(activeId, {
+      settlePendingFailure(activeId, {
         status: 'error',
         message: event.message || 'Worker execution failed.',
       });
@@ -115,7 +165,7 @@ export function createWellFormednessWorkerClient(
     const activeId = pending?.id;
     detachAndTerminateWorker();
     if (activeId !== undefined) {
-      settlePending(activeId, {
+      settlePendingFailure(activeId, {
         status: 'error',
         message: 'Worker returned an unserializable message.',
       });
@@ -172,17 +222,65 @@ export function createWellFormednessWorkerClient(
             return;
           }
           detachAndTerminateWorker();
-          settlePending(id, { status: 'timeout' });
+          settlePendingFailure(id, { status: 'timeout' });
         }, timeoutMs);
 
-        pending = { id, timer, resolve };
+        pending = { kind: 'checkWellFormedness', id, timer, resolve };
 
         try {
           const activeWorker = ensureWorker();
           activeWorker.postMessage(request);
         } catch (err: unknown) {
           detachAndTerminateWorker();
-          settlePending(id, {
+          settlePendingFailure(id, {
+            status: 'error',
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      });
+    },
+
+    format(
+      text: string,
+      options?: FormatXmlWorkerOptions,
+      callOptions?: WorkerFormatCallOptions,
+    ): Promise<WorkerFormatCallResult> {
+      if (disposed) {
+        return Promise.resolve({ status: 'cancelled' });
+      }
+
+      if (pending) {
+        cancelActiveRequest();
+      }
+
+      const id = nextRequestId++;
+      const effectiveTimeoutMs = Math.max(1, callOptions?.timeoutMs ?? DEFAULT_FORMAT_TIMEOUT_MS);
+      const payload: { readonly text: string; readonly options?: FormatXmlWorkerOptions } =
+        options !== undefined ? { text, options } : { text };
+      const request: FormatXmlRequest = {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id,
+        type: 'formatXml',
+        payload,
+      };
+
+      return new Promise<WorkerFormatCallResult>((resolve) => {
+        const timer = setTimeout(() => {
+          if (!pending || pending.id !== id) {
+            return;
+          }
+          detachAndTerminateWorker();
+          settlePendingFailure(id, { status: 'timeout' });
+        }, effectiveTimeoutMs);
+
+        pending = { kind: 'formatXml', id, timer, resolve };
+
+        try {
+          const activeWorker = ensureWorker();
+          activeWorker.postMessage(request);
+        } catch (err: unknown) {
+          detachAndTerminateWorker();
+          settlePendingFailure(id, {
             status: 'error',
             message: err instanceof Error ? err.message : String(err),
           });

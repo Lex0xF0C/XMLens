@@ -339,26 +339,129 @@ export function pickFirstDroppedFile<TFile extends BinaryFileLike>(
   return dataTransfer?.files?.[0] ?? null;
 }
 
+export type FormatFailureReason = 'invalid' | 'output-too-large' | 'internal-error';
+
+/**
+ * Classifies a failed `formatXml` result so UI callers separate parser well-formedness rejections,
+ * output-size guard rejections (`XML_FORMAT_OUTPUT_TOO_LARGE`), and internal formatter errors.
+ */
+export function classifyFormatFailure(diagnostics: readonly Diagnostic[]): FormatFailureReason {
+  if (diagnostics.some((diag) => diag.code === 'XML_FORMAT_OUTPUT_TOO_LARGE')) {
+    return 'output-too-large';
+  }
+  if (diagnostics.some((diag) => diag.source === 'parser' && diag.severity === 'error')) {
+    return 'invalid';
+  }
+  return 'internal-error';
+}
+
+/**
+ * Enforces the UTF-8 byte limit on formatted output so multi-byte documents within the UTF-16
+ * character cap cannot exceed the editor preview byte ceiling.
+ */
+export function enforceFormattedByteLimit(
+  result: FormatXmlResult,
+  maxUtf8Bytes: number,
+): FormatXmlResult {
+  if (!result.ok) {
+    return result;
+  }
+  const actualBytes = utf8ByteLength(result.formatted);
+  if (actualBytes <= maxUtf8Bytes) {
+    return result;
+  }
+  return {
+    ok: false,
+    diagnostics: [
+      {
+        severity: 'error',
+        code: 'XML_FORMAT_OUTPUT_TOO_LARGE',
+        messageKey: 'diagnostics.xml.formatOutputTooLarge',
+        params: {
+          limit: maxUtf8Bytes,
+          detail: `Formatted output (${actualBytes} UTF-8 bytes) exceeds the ${maxUtf8Bytes}-byte limit.`,
+        },
+        range: { line: 1, column: 1, offset: 0 },
+        source: 'core',
+      },
+    ],
+    elementCount: result.elementCount,
+    truncatedDiagnostics: result.truncatedDiagnostics,
+    ...(result.rootElement !== undefined ? { rootElement: result.rootElement } : {}),
+  };
+}
+
+export interface ResolveFormatWorkerOptionsInput {
+  readonly indentStyle: IndentStyle;
+  readonly hasLoadedFile: boolean;
+  readonly isModifiedSinceLoad: boolean;
+  readonly assumedEncoding?: string;
+  readonly maxOutputChars?: number;
+}
+
+export interface ResolvedFormatWorkerOptions {
+  readonly indentStyle: IndentStyle;
+  readonly maxOutputChars?: number;
+  readonly assumedEncoding?: string;
+}
+
+/**
+ * Builds serializable worker options for `formatXml`, forwarding `assumedEncoding` only while the
+ * buffer remains unmodified from disk so failure diagnostics omit spurious encoding notes.
+ */
+export function resolveFormatWorkerOptions(
+  input: ResolveFormatWorkerOptionsInput,
+): ResolvedFormatWorkerOptions {
+  const forwardEncoding =
+    input.hasLoadedFile && !input.isModifiedSinceLoad && input.assumedEncoding !== undefined;
+  return {
+    indentStyle: input.indentStyle,
+    ...(input.maxOutputChars !== undefined ? { maxOutputChars: input.maxOutputChars } : {}),
+    ...(forwardEncoding ? { assumedEncoding: input.assumedEncoding } : {}),
+  };
+}
+
 export interface FormatEditorXmlContext {
   readonly text: string;
   readonly indentStyle: IndentStyle;
   readonly hasLoadedFile: boolean;
   readonly isModifiedSinceLoad: boolean;
   readonly assumedEncoding?: string;
+  readonly maxOutputChars?: number;
+  readonly maxOutputUtf8Bytes?: number;
 }
 
 /**
- * Formats editor text using `formatXml`, forwarding `assumedEncoding` only while the buffer
- * remains unmodified from disk so failure diagnostics do not emit spurious `XML_ENCODING_DECLARATION_NOTE`.
+ * Synchronously formats editor text using `formatXml` with the same encoding/size policies used by
+ * the worker path. Kept DOM-free for unit testing.
  */
 export function formatEditorXml(context: FormatEditorXmlContext): FormatXmlResult {
-  const wellFormednessOptions =
-    context.hasLoadedFile && !context.isModifiedSinceLoad && context.assumedEncoding !== undefined
-      ? { assumedEncoding: context.assumedEncoding }
-      : undefined;
-
-  return formatXml(context.text, {
-    indentStyle: context.indentStyle,
-    ...(wellFormednessOptions !== undefined ? { wellFormednessOptions } : {}),
+  const workerOpts = resolveFormatWorkerOptions(context);
+  const rawResult = formatXml(context.text, {
+    indentStyle: workerOpts.indentStyle,
+    ...(workerOpts.maxOutputChars !== undefined
+      ? { maxOutputChars: workerOpts.maxOutputChars }
+      : {}),
+    ...(workerOpts.assumedEncoding !== undefined
+      ? { wellFormednessOptions: { assumedEncoding: workerOpts.assumedEncoding } }
+      : {}),
   });
+  return context.maxOutputUtf8Bytes !== undefined
+    ? enforceFormattedByteLimit(rawResult, context.maxOutputUtf8Bytes)
+    : rawResult;
+}
+
+export interface AsyncFormatDiscardCheck {
+  readonly requestEpoch: number;
+  readonly currentEpoch: number;
+  readonly sentText: string;
+  readonly currentTextareaValue: string;
+}
+
+/**
+ * Returns true if an async worker format result is stale (epoch superseded or editor text changed
+ * while formatting was in flight) and must be discarded without mutating editor text or status.
+ */
+export function shouldDiscardAsyncFormatResult(state: AsyncFormatDiscardCheck): boolean {
+  return state.requestEpoch !== state.currentEpoch || state.sentText !== state.currentTextareaValue;
 }

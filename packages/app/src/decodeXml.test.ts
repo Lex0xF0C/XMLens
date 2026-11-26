@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { checkWellFormedness } from '@xmlens/core';
 import {
+  classifyFormatFailure,
   decodeXmlBytes,
+  enforceFormattedByteLimit,
   formatEditorXml,
   isFileDataTransfer,
   loadAndDecodeXmlFile,
   normalizeDecodedTextForEditor,
   pickFirstDroppedFile,
+  resolveFormatWorkerOptions,
+  shouldDiscardAsyncFormatResult,
   utf8ByteLength,
 } from './decodeXml';
 import { getDefaultSavePreferences } from './saveXml';
@@ -463,5 +467,140 @@ describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
         modifiedResult.diagnostics.some((d) => d.code === 'XML_ENCODING_DECLARATION_NOTE'),
       ).toBe(true);
     }
+  });
+
+  it('classifies format failures into invalid, output-too-large, and internal-error', () => {
+    expect(
+      classifyFormatFailure([
+        {
+          severity: 'error',
+          code: 'XML_SYNTAX_ERROR',
+          messageKey: 'diagnostics.xml.syntaxError',
+          source: 'parser',
+        },
+      ]),
+    ).toBe('invalid');
+
+    expect(
+      classifyFormatFailure([
+        {
+          severity: 'error',
+          code: 'XML_FORMAT_OUTPUT_TOO_LARGE',
+          messageKey: 'diagnostics.xml.formatOutputTooLarge',
+          params: { limit: 1024 },
+          source: 'core',
+        },
+      ]),
+    ).toBe('output-too-large');
+
+    expect(
+      classifyFormatFailure([
+        {
+          severity: 'error',
+          code: 'XML_FORMAT_INTERNAL_ERROR',
+          messageKey: 'diagnostics.xml.formatInternalError',
+          params: { detail: 'unexpected' },
+          source: 'core',
+        },
+      ]),
+    ).toBe('internal-error');
+  });
+
+  it('enforces both maxOutputChars and maxOutputUtf8Bytes (catching multi-byte UTF-8 expansion)', () => {
+    // 20 Japanese hiragana chars = 20 UTF-16 code units (< maxOutputChars=40),
+    // but in UTF-8 each char is 3 bytes (<a>\n  あ...\n</a> -> 20*3 + 12 = 72 UTF-8 bytes > 60).
+    const multiByteXml = `<a>${'あ'.repeat(20)}<b/></a>`;
+    const charPassOnly = formatEditorXml({
+      text: multiByteXml,
+      indentStyle: 'spaces-2',
+      hasLoadedFile: false,
+      isModifiedSinceLoad: false,
+      maxOutputChars: 100,
+    });
+    expect(charPassOnly.ok).toBe(true);
+    if (!charPassOnly.ok) {
+      throw new Error('Expected character-only limit to pass');
+    }
+    expect(charPassOnly.formatted.length).toBeLessThanOrEqual(100);
+    expect(utf8ByteLength(charPassOnly.formatted)).toBeGreaterThan(60);
+
+    const utf8Rejected = formatEditorXml({
+      text: multiByteXml,
+      indentStyle: 'spaces-2',
+      hasLoadedFile: false,
+      isModifiedSinceLoad: false,
+      maxOutputChars: 100,
+      maxOutputUtf8Bytes: 60,
+    });
+    expect(utf8Rejected.ok).toBe(false);
+    if (!utf8Rejected.ok) {
+      expect(classifyFormatFailure(utf8Rejected.diagnostics)).toBe('output-too-large');
+      expect(utf8Rejected.diagnostics[0]?.code).toBe('XML_FORMAT_OUTPUT_TOO_LARGE');
+    }
+
+    // Directly verify enforceFormattedByteLimit passes at exact UTF-8 byte boundary and rejects +1.
+    const exactBytes = utf8ByteLength(charPassOnly.formatted);
+    expect(enforceFormattedByteLimit(charPassOnly, exactBytes).ok).toBe(true);
+    const overByOne = enforceFormattedByteLimit(charPassOnly, exactBytes - 1);
+    expect(overByOne.ok).toBe(false);
+    if (!overByOne.ok) {
+      expect(classifyFormatFailure(overByOne.diagnostics)).toBe('output-too-large');
+    }
+  });
+
+  it('builds worker format options cleanly and discards stale async format results', () => {
+    expect(
+      resolveFormatWorkerOptions({
+        indentStyle: 'tab',
+        hasLoadedFile: true,
+        isModifiedSinceLoad: false,
+        assumedEncoding: 'Shift_JIS',
+        maxOutputChars: 1048576,
+      }),
+    ).toEqual({
+      indentStyle: 'tab',
+      maxOutputChars: 1048576,
+      assumedEncoding: 'Shift_JIS',
+    });
+
+    expect(
+      resolveFormatWorkerOptions({
+        indentStyle: 'spaces-2',
+        hasLoadedFile: true,
+        isModifiedSinceLoad: true,
+        assumedEncoding: 'Shift_JIS',
+        maxOutputChars: 1048576,
+      }),
+    ).toEqual({
+      indentStyle: 'spaces-2',
+      maxOutputChars: 1048576,
+    });
+
+    expect(
+      shouldDiscardAsyncFormatResult({
+        requestEpoch: 3,
+        currentEpoch: 3,
+        sentText: '<a><b/></a>',
+        currentTextareaValue: '<a><b/></a>',
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldDiscardAsyncFormatResult({
+        requestEpoch: 3,
+        currentEpoch: 4,
+        sentText: '<a><b/></a>',
+        currentTextareaValue: '<a><b/></a>',
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldDiscardAsyncFormatResult({
+        requestEpoch: 3,
+        currentEpoch: 3,
+        sentText: '<a><b/></a>',
+        currentTextareaValue: '<a><b/><c/></a>',
+      }),
+    ).toBe(true);
   });
 });

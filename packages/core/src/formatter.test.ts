@@ -260,11 +260,37 @@ describe('formatXml', () => {
       expect(capped.diagnostics).toHaveLength(1);
       expect(capped.diagnostics[0]).toMatchObject({
         severity: 'error',
-        code: 'XML_FORMAT_INTERNAL_ERROR',
-        messageKey: 'diagnostics.xml.formatInternalError',
+        code: 'XML_FORMAT_OUTPUT_TOO_LARGE',
+        messageKey: 'diagnostics.xml.formatOutputTooLarge',
         source: 'core',
+        params: { limit: 256 * 1024 * 1024 },
       });
       expect(typeof capped.diagnostics[0]?.params?.detail).toBe('string');
+    }
+  });
+
+  it('enforces maxOutputChars option at exact boundary and returns XML_FORMAT_OUTPUT_TOO_LARGE when exceeded', () => {
+    const xml = '<root><a><b/></a></root>';
+    const expected = '<root>\n  <a>\n    <b/>\n  </a>\n</root>';
+
+    const exact = formatXml(xml, { maxOutputChars: expected.length });
+    expect(exact.ok).toBe(true);
+    if (exact.ok) {
+      expect(exact.formatted).toBe(expected);
+    }
+
+    const tooSmall = formatXml(xml, { maxOutputChars: expected.length - 1 });
+    expect(tooSmall.ok).toBe(false);
+    if (!tooSmall.ok) {
+      expect(tooSmall.diagnostics).toHaveLength(1);
+      expect(tooSmall.diagnostics[0]).toMatchObject({
+        severity: 'error',
+        code: 'XML_FORMAT_OUTPUT_TOO_LARGE',
+        messageKey: 'diagnostics.xml.formatOutputTooLarge',
+        source: 'core',
+        params: { limit: expected.length - 1 },
+      });
+      expect(typeof tooSmall.diagnostics[0]?.params?.detail).toBe('string');
     }
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createWellFormednessWorkerClient,
+  DEFAULT_FORMAT_TIMEOUT_MS,
   handleWorkerRequest,
   isWorkerResponse,
   WORKER_PROTOCOL_VERSION,
@@ -135,7 +136,7 @@ describe('worker protocol and handler', () => {
     });
     expect(validRes.ok).toBe(true);
     expect(isWorkerResponse(validRes)).toBe(true);
-    if (validRes.ok) {
+    if (validRes.ok && validRes.type === 'checkWellFormedness') {
       expect(validRes.result.wellFormed).toBe(true);
       expect(validRes.result.rootElement).toBe('root');
       expect(validRes.result.elementCount).toBe(2);
@@ -148,7 +149,7 @@ describe('worker protocol and handler', () => {
       payload: { xml: '<root><a></b></root>', options: { maxDiagnostics: 1 } },
     });
     expect(badRes.ok).toBe(true);
-    if (badRes.ok) {
+    if (badRes.ok && badRes.type === 'checkWellFormedness') {
       expect(badRes.result.wellFormed).toBe(false);
       expect(badRes.result.diagnostics).toHaveLength(1);
       expect(badRes.result.truncatedDiagnostics).toBe(true);
@@ -161,7 +162,7 @@ describe('worker protocol and handler', () => {
       payload: { xml: '<!DOCTYPE doc SYSTEM "example.dtd"><doc>&ext;</doc>' },
     });
     expect(extEntityRes.ok).toBe(true);
-    if (extEntityRes.ok) {
+    if (extEntityRes.ok && extEntityRes.type === 'checkWellFormedness') {
       expect(extEntityRes.result.wellFormed).toBe(true);
       expect(extEntityRes.result.diagnostics.map((d) => d.code)).toContain(
         'XML_UNDECLARED_EXTERNAL_ENTITY',
@@ -180,6 +181,138 @@ describe('worker protocol and handler', () => {
         error: { code: 'INTERNAL_ERROR', message: 'boom' },
       }),
     ).toBe(true);
+    expect(
+      isWorkerResponse({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 2,
+        ok: true,
+        type: 'formatXml',
+        result: {
+          ok: true,
+          formatted: '<a>\n  <b/>\n</a>',
+          changed: true,
+          diagnostics: [],
+          elementCount: 2,
+          rootElement: 'a',
+          truncatedDiagnostics: false,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isWorkerResponse({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 3,
+        ok: true,
+        type: 'formatXml',
+        result: { ok: 'yes' },
+      }),
+    ).toBe(false);
+    expect(
+      isWorkerResponse({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 4,
+        ok: true,
+        type: 'unknownType',
+        result: {},
+      }),
+    ).toBe(false);
+  });
+
+  it('handles formatXml requests and strictly validates formatXml payloads and options', () => {
+    const validFormat = handleWorkerRequest({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      id: 10,
+      type: 'formatXml',
+      payload: {
+        text: '<a><b/></a>',
+        options: { indentStyle: 'spaces-4' },
+      },
+    });
+    expect(validFormat.ok).toBe(true);
+    expect(isWorkerResponse(validFormat)).toBe(true);
+    if (validFormat.ok && validFormat.type === 'formatXml') {
+      expect(validFormat.result.ok).toBe(true);
+      if (validFormat.result.ok) {
+        expect(validFormat.result.formatted).toBe('<a>\n    <b/>\n</a>');
+        expect(validFormat.result.changed).toBe(true);
+      }
+    }
+
+    const overflowFormat = handleWorkerRequest({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      id: 11,
+      type: 'formatXml',
+      payload: {
+        text: '<a><b/></a>',
+        options: { indentStyle: 'spaces-2', maxOutputChars: 8 },
+      },
+    });
+    expect(overflowFormat.ok).toBe(true);
+    if (overflowFormat.ok && overflowFormat.type === 'formatXml') {
+      expect(overflowFormat.result.ok).toBe(false);
+      expect(overflowFormat.result.diagnostics.map((d) => d.code)).toContain(
+        'XML_FORMAT_OUTPUT_TOO_LARGE',
+      );
+    }
+
+    const badPayloads: readonly unknown[] = [
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 12,
+        type: 'formatXml',
+        payload: { text: 42 },
+      },
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 13,
+        type: 'formatXml',
+        payload: { text: '<a/>', options: null },
+      },
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 14,
+        type: 'formatXml',
+        payload: { text: '<a/>', options: ['spaces-2'] },
+      },
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 15,
+        type: 'formatXml',
+        payload: { text: '<a/>', options: { indentStyle: 'spaces-8' } },
+      },
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 16,
+        type: 'formatXml',
+        payload: { text: '<a/>', options: { maxOutputChars: -1 } },
+      },
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 17,
+        type: 'formatXml',
+        payload: { text: '<a/>', options: { maxOutputChars: Number.NaN } },
+      },
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 18,
+        type: 'formatXml',
+        payload: { text: '<a/>', options: { maxOutputChars: '100' } },
+      },
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 19,
+        type: 'formatXml',
+        payload: { text: '<a/>', options: { assumedEncoding: 123 } },
+      },
+    ];
+
+    for (const rawReq of badPayloads) {
+      const res = handleWorkerRequest(rawReq);
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.error.code).toBe('INVALID_REQUEST');
+      }
+    }
   });
 });
 
@@ -347,5 +480,78 @@ describe('createWellFormednessWorkerClient', () => {
 
     client.dispose();
     expect(await client.check('<c/>')).toEqual({ status: 'cancelled' });
+    expect(await client.format('<c/>')).toEqual({ status: 'cancelled' });
+  });
+
+  it('runs formatXml over RPC, exports 15s default timeout, and shares cancellation with check', async () => {
+    expect(DEFAULT_FORMAT_TIMEOUT_MS).toBe(15_000);
+
+    const workers: FakeWorker[] = [];
+    const client = createWellFormednessWorkerClient(() => {
+      const w = new FakeWorker();
+      workers.push(w);
+      return w;
+    });
+
+    const formatPromise = client.format('<a><b/></a>', { indentStyle: 'tab' });
+    expect(workers).toHaveLength(1);
+    const worker0 = requireWorker(workers, 0);
+    worker0.emitMessage(handleWorkerRequest(worker0.postedMessages[0]));
+    const formatOutcome = await formatPromise;
+    expect(formatOutcome.status).toBe('ok');
+    if (formatOutcome.status === 'ok') {
+      expect(formatOutcome.result.ok).toBe(true);
+      if (formatOutcome.result.ok) {
+        expect(formatOutcome.result.formatted).toBe('<a>\n\t<b/>\n</a>');
+      }
+    }
+
+    // Double-clicking Format cancels the earlier format request.
+    const firstFormat = client.format('<a><first/></a>');
+    const secondFormat = client.format('<a><second/></a>');
+    expect(workers).toHaveLength(2);
+    expect(requireWorker(workers, 0).terminated).toBe(true);
+    expect(await firstFormat).toEqual({ status: 'cancelled' });
+
+    // A subsequent check() cancels an in-flight format(), and a format() cancels an in-flight check().
+    const supersededCheck = client.check('<still-running/>');
+    expect(workers).toHaveLength(3);
+    expect(requireWorker(workers, 1).terminated).toBe(true);
+    expect(await secondFormat).toEqual({ status: 'cancelled' });
+
+    const finalFormat = client.format('<a><final/></a>');
+    expect(workers).toHaveLength(4);
+    expect(requireWorker(workers, 2).terminated).toBe(true);
+    expect(await supersededCheck).toEqual({ status: 'cancelled' });
+
+    const worker3 = requireWorker(workers, 3);
+    worker3.emitMessage(handleWorkerRequest(worker3.postedMessages[0]));
+    const finalOutcome = await finalFormat;
+    expect(finalOutcome.status).toBe('ok');
+
+    client.dispose();
+  });
+
+  it('terminates the worker on format timeout and respawns a fresh worker', async () => {
+    const workers: FakeWorker[] = [];
+    const client = createWellFormednessWorkerClient(() => {
+      const w = new FakeWorker();
+      workers.push(w);
+      return w;
+    });
+
+    const timedOut = await client.format('<slow/>', undefined, { timeoutMs: 25 });
+    expect(timedOut).toEqual({ status: 'timeout' });
+    expect(workers).toHaveLength(1);
+    expect(requireWorker(workers, 0).terminated).toBe(true);
+
+    const recovered = client.format('<a><fast/></a>');
+    expect(workers).toHaveLength(2);
+    const secondWorker = requireWorker(workers, 1);
+    secondWorker.emitMessage(handleWorkerRequest(secondWorker.postedMessages[0]));
+    const okOutcome = await recovered;
+    expect(okOutcome.status).toBe('ok');
+
+    client.dispose();
   });
 });

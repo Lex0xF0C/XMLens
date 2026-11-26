@@ -82,12 +82,26 @@ Note on `saxes` scaling: on deeply nested elements **without** `xmlns` bindings 
 
 **Important:** Actual browser main-thread responsiveness, perceived UI freeze, and `<textarea>.setRangeText` / CodeMirror layout-reflow cost across Chromium, Firefox, and WebKit are **unverified** in AI Studio.
 
-### Decision Input for M1b (Worker Offloading — Awaiting Maintainer Decision)
+### Decision Input for M1b (Resolved — Implemented in Addendum Below)
 
-- **Arguments for moving `formatXml` into `@xmlens/workers` in M1b:** Even a 1 MiB flat document takes ~192 ms in Node (`> 50 ms` INP responsiveness budget), medium/deep 1 MiB documents take ~0.9–2.1 s, and un-namespaced deep nesting can trigger multi-second `saxes` runs—all of which freeze the browser main thread when run synchronously and would benefit from worker timeouts and cancellation (`AGENTS.md` §4.2.6).
-- **Arguments against (or trade-offs):** Moving `formatXml` to a worker requires asynchronous editor replacement with stale-edit cancellation/revision checks (`EditorState` version / epoch) if the user types while formatting is in flight, plus transferring large formatted strings (up to tens of megabytes for deep trees) over `postMessage`.
+- **Rationale for moving `formatXml` into `@xmlens/workers`:** Even a 1 MiB flat document takes ~192 ms in Node (`> 50 ms` INP responsiveness budget), medium/deep 1 MiB documents take ~0.9–2.1 s, and un-namespaced deep nesting can trigger multi-second `saxes` runs—all of which freeze the browser main thread when run synchronously and benefit from worker timeouts and cancellation (`AGENTS.md` §4.2.6).
+- **Trade-offs addressed:** Moving `formatXml` to `@xmlens/workers` uses asynchronous editor replacement with epoch + text-snapshot stale-result discard (`shouldDiscardAsyncFormatResult`) when the user edits or issues a newer request while formatting is in flight, alongside a `1 MiB` output limit aligned with `MAX_PREVIEW_BYTES`.
 
 ## Consequences
 
-- **Positive:** Zero new npm dependencies; `packages/core` remains DOM-free (`ES2022`); formatting is 100% lossless on entities, DTDs, CDATA, mixed content, and `xml:space="preserve"`, stack-safe on deep nesting, guarded against `RangeError`/OOM, and guaranteed idempotent.
-- **Negative / Unverified:** Synchronous main-thread formatting on 1 MiB inputs takes ~0.19–2.13 s in Node.js (and potentially longer on slower client CPUs); live browser UI responsiveness, `<textarea>.setRangeText`, native `Ctrl+Z` undo behavior, and toolbar keyboard focus across Chromium, Firefox, and WebKit remain **unverified** in AI Studio.
+- **Positive:** Zero new npm dependencies; `packages/core` remains DOM-free (`ES2022`); formatting is 100% lossless on entities, DTDs, CDATA, mixed content, and `xml:space="preserve"`, stack-safe on deep nesting, guarded against `RangeError`/OOM and oversized formatted output, non-blocking via `@xmlens/workers`, and guaranteed idempotent.
+- **Negative / Unverified:** Live browser UI responsiveness, worker cancellation UX, `<textarea>.setRangeText`, native `Ctrl+Z` undo behavior, and toolbar keyboard focus across Chromium, Firefox, and WebKit remain **unverified** in AI Studio.
+
+## Addendum (2026-11-25): Output Cap Alignment, Failure Classification & Worker Execution
+
+Following review of the initial M1 formatter implementation, three targeted improvements were applied while keeping `Status: Proposed` until maintainer review of the final M1b editor integration and provisional Japanese strings:
+
+1. **Practical Output-Size Limit (`1 MiB` Alignment in `packages/app`):**
+   - `packages/core` `FormatXmlOptions` now accepts an optional `maxOutputChars?: number` (preserving `MAX_FORMATTED_CHARS = 256 * 1024 * 1024` as the default for direct `core` callers). `FormattedOutputBuffer` throws `FormatOutputLimitError` (`extends RangeError`) when exceeded, and `formatXml` maps `FormatOutputLimitError` to `XML_FORMAT_OUTPUT_TOO_LARGE` (`diagnostics.xml.formatOutputTooLarge`, `source: 'core'`), keeping unexpected runtime errors under `XML_FORMAT_INTERNAL_ERROR`.
+   - `packages/app` passes `maxOutputChars: MAX_PREVIEW_BYTES` (`1,048,576`) to the worker and also enforces `enforceFormattedByteLimit(result, MAX_PREVIEW_BYTES)` via `utf8ByteLength`, rejecting multi-byte XML outputs whose UTF-16 character length fits within `1,048,576` chars but whose UTF-8 byte length exceeds `1 MiB` without mutating `<textarea>`.
+2. **Explicit Format Failure Classification in UI (`classifyFormatFailure`):**
+   - `packages/app` distinguishes three failure classes in `ValidationStatus`: parser well-formedness rejections (`'invalid'` -> `preview.formatInvalid` + `statusBar.notWellFormed`), output-limit rejections (`'output-too-large'` -> `format-failed` with `preview.formatOutputTooLarge` + `statusBar.formatFailed`), and internal/worker/timeout errors (`'internal-error'` -> `format-failed` with `preview.formatError` + `statusBar.formatFailed`, eliminating reuse of `preview.workerError`).
+3. **Web Worker Offloading (`@xmlens/workers`):**
+   - Added versioned `'formatXml'` request/response handling (`WORKER_PROTOCOL_VERSION = 1`) in `packages/workers` with strict option validation (`INVALID_REQUEST` on invalid `indentStyle`, negative/non-finite `maxOutputChars`, or invalid option types).
+   - Added `client.format(text, options?, { timeoutMs? })` (`DEFAULT_FORMAT_TIMEOUT_MS = 15_000`) sharing the single `pending` slot with `client.check()` so double-clicking **Format**, typing, opening a file, or clicking **Check** mutually supersedes prior in-flight work.
+   - `packages/app/src/main.ts` invokes `workerClient.format(...)` asynchronously, displays `statusBar.checking` while running, discards stale responses via `shouldDiscardAsyncFormatResult({ requestEpoch, currentEpoch, sentText, currentTextareaValue })`, and leaves `<textarea>` untouched on any failure or cancellation.
