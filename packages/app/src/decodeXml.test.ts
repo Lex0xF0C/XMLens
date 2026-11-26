@@ -535,7 +535,11 @@ describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
     expect(utf8Rejected.ok).toBe(false);
     if (!utf8Rejected.ok) {
       expect(classifyFormatFailure(utf8Rejected.diagnostics)).toBe('output-too-large');
-      expect(utf8Rejected.diagnostics[0]?.code).toBe('XML_FORMAT_OUTPUT_TOO_LARGE');
+      expect(utf8Rejected.diagnostics[0]).toMatchObject({
+        code: 'XML_FORMAT_OUTPUT_TOO_LARGE',
+        messageKey: 'diagnostics.xml.formatOutputTooLargeBytes',
+        params: { limit: 60 },
+      });
     }
 
     // Directly verify enforceFormattedByteLimit passes at exact UTF-8 byte boundary and rejects +1.
@@ -545,6 +549,11 @@ describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
     expect(overByOne.ok).toBe(false);
     if (!overByOne.ok) {
       expect(classifyFormatFailure(overByOne.diagnostics)).toBe('output-too-large');
+      expect(overByOne.diagnostics[0]).toMatchObject({
+        code: 'XML_FORMAT_OUTPUT_TOO_LARGE',
+        messageKey: 'diagnostics.xml.formatOutputTooLargeBytes',
+        params: { limit: exactBytes - 1 },
+      });
     }
   });
 

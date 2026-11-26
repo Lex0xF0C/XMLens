@@ -102,6 +102,7 @@
   "diagnostics.xml.encodingDeclarationNote": "XML declaration specifies encoding \"{declared}\", while in-memory text is parsed as {assumed}.",
   "diagnostics.xml.formatInternalError": "Could not format XML due to an internal error or output size limit: {detail}",
   "diagnostics.xml.formatOutputTooLarge": "Formatted output exceeds the size limit ({limit} characters).",
+  "diagnostics.xml.formatOutputTooLargeBytes": "Formatted output exceeds the size limit ({limit} UTF-8 bytes).",
   "diagnostics.encoding.unsupported": "Unsupported character encoding \"{encoding}\".",
   "diagnostics.encoding.bomConflict": "Byte-order mark / pattern ({detected}) differs from XML declaration encoding \"{declared}\"; using {detected}.",
   "diagnostics.encoding.unknownFallback": "Encoding label \"{requested}\" is not recognized by this browser; falling back to {fallback}.",

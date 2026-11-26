@@ -1,11 +1,36 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+This changelog separates **development changelog versions** (`DEV-NNNN`, monotonic 4-digit sequence assigned on every `main` sync/merge) from **product release versions** (`vX.Y.Z` Semantic Versioning, assigned only at official releases). Pull requests stage entries under `[Pending]` without assigning a `DEV` number; see [`AGENTS.md` §12](./AGENTS.md#12-changelog-policy) and [`docs/adr/0013-changelog-dev-versioning.md`](./docs/adr/0013-changelog-dev-versioning.md).
+本ファイルは、開発変更履歴バージョン（`main` 同期・マージ毎に採番する単調増加の `DEV-NNNN`）と製品リリースバージョン（正式リリース時のみ付与するセマンティックバージョニング `vX.Y.Z`）を分離して管理します。PR は番号を採番せず `[Pending]` に追記します。運用規則の詳細は [`AGENTS.md` §12](./AGENTS.md#12-changelog-policy) および [`docs/adr/0013-changelog-dev-versioning.md`](./docs/adr/0013-changelog-dev-versioning.md) を参照してください。
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [Pending]
 
-## [Unreleased]
+(none)
+
+## [DEV-0002] - 2026-11-26
+
+- **Sync:** direct
+- **Refs:** ADR-0012, ADR-0013, locales/en.json, locales/ja.json, packages/app/src/decodeXml.ts, packages/app/src/decodeXml.test.ts, docs/i18n-guide.md, docs/feature-matrix.md, AGENTS.md, CONTRIBUTING.md, CHANGELOG.md
+
+### Added
+
+- Added dedicated UTF-8 byte-limit diagnostic key `diagnostics.xml.formatOutputTooLargeBytes` to `locales/en.json` and `locales/ja.json`, and asserted `messageKey` and `classifyFormatFailure` behavior in `packages/app/src/decodeXml.test.ts`.
+- Created `docs/adr/0013-changelog-dev-versioning.md` (`Status: Accepted`) defining the `DEV-NNNN` development changelog versioning policy, `[Pending]` PR staging, and release section format.
+- Added `## 12. Changelog policy` to `AGENTS.md`.
+
+### Changed
+
+- Updated `locales/ja.json` `preview.formatError` to `整形に失敗しました: {detail}`, cleared `needs-ja-review` on `preview.formatOutputTooLarge` and `statusBar.formatFailed`, and added notes in `docs/i18n-guide.md` covering `Format` (`整形` vs. `整形式`, alternative candidate `フォーマット`, retaining `Undecided`) and `MB` size-limit wording (`1 MiB` = `1,048,576` bytes aligned with `preview.tooLarge`).
+- Advanced `docs/adr/0012-xml-formatter.md` to `Status: Accepted` (2026-11-26 maintainer approval), reconciling Decision §2 with the Addendum's Web Worker offloading, documenting `formatEditorXml` as a DOM-free test helper and `setRangeText` replacement in M1b (CodeMirror 6), and updating `docs/feature-matrix.md`.
+- Migrated `CHANGELOG.md` from `[Unreleased]` to `DEV-NNNN` development versioning (`[Pending]`, `DEV-0002`, and `DEV-0001` baseline preserving prior `[Unreleased]` history verbatim) and aligned `AGENTS.md` (§7 item 5, §10) and `CONTRIBUTING.md`.
+
+### Fixed
+
+- Updated `enforceFormattedByteLimit` in `packages/app/src/decodeXml.ts` to emit `diagnostics.xml.formatOutputTooLargeBytes` instead of reusing `diagnostics.xml.formatOutputTooLarge` when formatted output exceeds `1 MiB` in UTF-8 bytes, resolving the byte-count vs. character-label mismatch while preserving `code: 'XML_FORMAT_OUTPUT_TOO_LARGE'` and `classifyFormatFailure`.
+
+## [DEV-0001] - Baseline
+
+Baseline: 運用方式導入前の全変更を遡及的に集約した記録。個別の変更日は未記録のため推測していない。
 
 ### Added
 

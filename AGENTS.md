@@ -156,7 +156,7 @@ Keep `packages/core` and planned `packages/project` free of DOM and browser glob
 2. **Small, focused changes.** One concern per PR. Keep diffs reviewable.
 3. **Respect priorities.** Do not implement P2/P3 or "OUT" items from the plan unless an issue and (if architectural) an ADR exist.
 4. **Write an ADR** (`docs/adr/NNNN-title.md`: context, decision, consequences, alternatives) for: new framework/library of significance, CSP changes, data format changes, license-sensitive choices, anything marked "Open decisions" in the plan.
-5. **Update docs and changelog with code:** user docs (en + ja), `docs/feature-matrix.md`, and this file when commands or rules change. Every user-visible, dependency, security, CSP, or license-policy change must update `CHANGELOG.md` under `[Unreleased]` in the same change.
+5. **Update docs and changelog with code:** user docs (en + ja), `docs/feature-matrix.md`, and this file when commands or rules change. Every code, documentation, or configuration change must update `CHANGELOG.md` per §12 in the same change.
 6. **When uncertain, ask** rather than guess. Especially for: licensing, scope, security posture, destructive operations, and translations of domain terminology.
 7. **Do not fabricate.** Don't invent API behavior, package features, standards details, or test results. Verify against official docs or by running code, and cite the source in the PR when it matters (e.g., a W3C/OASIS section).
 
@@ -194,7 +194,7 @@ A change is done only when:
 - [ ] No new network calls, no CSP loosening, no disallowed licenses
 - [ ] No SaxonJS/`xslt3` file in the workspace or git; `package.json` and lockfile unchanged in that respect; repository guard passes
 - [ ] Docs and feature matrix updated (en + ja where user-facing)
-- [ ] `CHANGELOG.md` updated under `[Unreleased]` for any user-visible, dependency, security, CSP, or license-policy change
+- [ ] `CHANGELOG.md` updated per §12 (`DEV-NNNN` on direct sync, or `[Pending]` in PRs) for any code, documentation, or configuration change
 - [ ] Risks, limitations, and unverified assumptions are stated in the PR description
 - [ ] No engine directly accesses IndexedDB, file storage, or external network URLs (uses Resource Resolver / `ResourceBundle`)
 
@@ -211,3 +211,17 @@ A change is done only when:
 - Changing the `xmlens.project.json` schema (`schemaVersion`) after v1
 - Adding a ZIP library dependency (verify license, maintenance, and bundle size first)
 - Enabling external network resource fetching or loosening CSP `connect-src`
+
+## 12. Changelog policy
+
+(`ADR-0013`)
+
+1. **Change and record together:** Whenever you make an actual change to code, documentation, or configuration, update `CHANGELOG.md` within the same task.
+2. **Read latest first:** Before writing to `CHANGELOG.md`, always re-read the latest `CHANGELOG.md` from disk (the workspace may differ from GitHub `main`).
+3. **Numbering and `[Pending]` promotion:** Assign the next number as `(highest existing DEV number) + 1` (4-digit zero-padded, `DEV-NNNN`). If `[Pending]` contains any items, **move** them into the new `DEV-NNNN` entry rather than duplicating them, leaving `[Pending]` with `(none)`.
+4. **One `DEV` entry per session:** When syncing multiple times within the same working session, as long as a `DEV-NNNN` entry created in this session already exists, append to that entry rather than allocating a new number. Allocate a new `DEV-NNNN` number only for a new sync in a separate session.
+5. **Immutable history:** Never delete or rewrite past `DEV-NNNN` entries. If you find an error in an earlier entry, record the correction under `### Fixed` in the new `DEV-NNNN` entry.
+6. **Check for duplicates before writing:** Search existing entries (by file path, ADR number, or symbol name) before writing so you do not duplicate already-recorded changes; follow-up work on an existing feature belongs under `### Changed` in the new entry.
+7. **Section classification:** Use `Added`, `Changed`, `Fixed`, `Security`, `Removed`, and `Deprecated`. Omit empty sections. Record only files and behavior actually changed in the workspace (never unimplemented plans). Record dates using `YYYY-MM-DD` (Asia/Tokyo baseline; append `(UTC)` if only UTC is known, or `date-unknown` if unknown—never guess).
+8. **PR workflow (`[Pending]`):** Changes submitted via Pull Request must be added under `## [Pending]` without assigning a `DEV-NNNN` number. The side integrating into `main` (AI Studio direct sync or the merging maintainer) assigns the `DEV-NNNN` number.
+9. **Official releases (`vX.Y.Z`):** For an official product release (only when explicitly instructed by a maintainer), insert a `## [vX.Y.Z] - YYYY-MM-DD` heading directly above the latest `DEV-NNNN` entry included in that release, listing `Includes: DEV-xxxx … DEV-yyyy` and a user-facing summary, and tag the commit in git. Do not modify existing `DEV-NNNN` entries.

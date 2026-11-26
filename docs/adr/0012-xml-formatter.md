@@ -1,6 +1,6 @@
 # ADR-0012: Pure TypeScript XML Formatter (Pretty-Print) & Editor Replacement Strategy
 
-- **Status:** Proposed (implemented for M1 review; awaiting maintainer acceptance and live browser verification)
+- **Status:** Accepted (formatter engine, worker execution, and output limits implemented and unit-tested; live-browser verification pending)
 - **Date:** 2026-11-25
 
 ## Context
@@ -59,12 +59,13 @@ We inspected `node_modules/typescript/lib/lib.dom.d.ts` (TypeScript 5.8 DOM typi
 
 ### 2. UI Toolbar Action & `<textarea>` Replacement Strategy (`packages/app`)
 
+> **Accepted:** 2026-11-26 (maintainer approval). Note: Synchronous main-thread formatting described in the initial draft (`formatEditorXml` directly in the click handler with `worker-error` fallback) has been **replaced by the Addendum below (Web Worker offloading via `@xmlens/workers`)**.
+
 - Add a working **Format** (`toolbar.format`, `#format-button`) button to the workbench toolbar paired with an accessible **Indent** selector (`#indent-select`: `2 spaces`, `4 spaces`, `Tab`).
-- **Size guard:** Inputs exceeding the 1 MB UTF-8 preview limit (`utf8ByteLength > MAX_PREVIEW_BYTES`) trigger `too-large` without running synchronous formatting on the main thread.
-- **Error isolation & encoding context:** `packages/app/src/main.ts` wraps the formatter invocation (`formatEditorXml`) in `try/catch` (falling back to `worker-error` display) so uncaught exceptions cannot surface from UI handlers. When the buffer is unmodified after opening a file (`loadedFileBytes !== null && !isModifiedSinceLoad`), `lastAssumedEncoding` is forwarded to `formatXml`'s `wellFormednessOptions` so failure diagnostics do not emit spurious `XML_ENCODING_DECLARATION_NOTE` entries.
+- **Size guard & Worker execution (superseded by Addendum):** Inputs exceeding `MAX_PREVIEW_BYTES` (`1 MiB` UTF-8) trigger `too-large` before dispatching; valid-sized inputs run asynchronously in `@xmlens/workers` (`formatXml` RPC with `maxOutputChars: MAX_PREVIEW_BYTES`, `15s` timeout, cancellation, and `enforceFormattedByteLimit` UTF-8 check on return). `formatEditorXml` in `packages/app/src/decodeXml.ts` now exists purely as a DOM-free test helper mirroring the worker policy.
 - **Replacement API:** Use standard non-deprecated `textarea.setRangeText(formatted, 0, textarea.value.length, 'start')` (falling back to `.value = formatted` if unavailable), avoiding `@deprecated` `document.execCommand('insertText')` and avoiding stealing keyboard focus from the **Format** button when activated via keyboard.
-- **Limitation & Future M1b Path:** Programmatic `setRangeText` replacement in `<textarea>` typically clears or does not register a native `Ctrl+Z` / `Cmd+Z` undo entry (**exact Windows Chrome/Edge/Firefox/WebKit behavior unverified**). Full multi-step Undo/Redo across Format operations will be provided by CodeMirror 6's `EditorState` / `@codemirror/commands` history in M1b (`ADR-0005`).
-- After formatting succeeds and modifies text, set `isModifiedSinceLoad = true` and schedule the debounced worker well-formedness re-check; if `formatXml` fails (`!ok`), render its `diagnostics` in the existing diagnostics list with `preview.formatInvalid` without adding separate error UI.
+- **Limitation & Future M1b Path:** Programmatic `setRangeText` replacement in `<textarea>` typically clears or does not register a native `Ctrl+Z` / `Cmd+Z` undo entry (exact browser behavior unverified). The `<textarea>` replacement strategy itself is expected to be replaced by CodeMirror 6 (`EditorState` / `@codemirror/commands` multi-step history) in M1b (`ADR-0005`).
+- After formatting succeeds and modifies text, set `isModifiedSinceLoad = true` and trigger `runWorkerCheck`; if formatting fails (`!ok`), `classifyFormatFailure` distinguishes `preview.formatInvalid` (`'invalid'`), `preview.formatOutputTooLarge` (`'output-too-large'`), and `preview.formatError` (`'internal-error'`).
 
 ## Measured Performance
 
@@ -90,15 +91,18 @@ Note on `saxes` scaling: on deeply nested elements **without** `xmlns` bindings 
 ## Consequences
 
 - **Positive:** Zero new npm dependencies; `packages/core` remains DOM-free (`ES2022`); formatting is 100% lossless on entities, DTDs, CDATA, mixed content, and `xml:space="preserve"`, stack-safe on deep nesting, guarded against `RangeError`/OOM and oversized formatted output, non-blocking via `@xmlens/workers`, and guaranteed idempotent.
-- **Negative / Unverified:** Live browser UI responsiveness, worker cancellation UX, `<textarea>.setRangeText`, native `Ctrl+Z` undo behavior, and toolbar keyboard focus across Chromium, Firefox, and WebKit remain **unverified** in AI Studio.
+- **Unverified (pending live-browser check):**
+  - `<textarea>.setRangeText` and native `Ctrl+Z` / `Cmd+Z` undo behavior
+  - Live browser responsiveness and Web Worker cancellation UX
+  - Keyboard focus behavior across Windows browsers (and Chromium/Firefox/WebKit)
 
 ## Addendum (2026-11-25): Output Cap Alignment, Failure Classification & Worker Execution
 
-Following review of the initial M1 formatter implementation, three targeted improvements were applied while keeping `Status: Proposed` until maintainer review of the final M1b editor integration and provisional Japanese strings:
+**Accepted:** 2026-11-26 (maintainer approval). Following review of the initial M1 formatter implementation, the following improvements were applied before advancing this ADR to `Accepted`:
 
 1. **Practical Output-Size Limit (`1 MiB` Alignment in `packages/app`):**
    - `packages/core` `FormatXmlOptions` now accepts an optional `maxOutputChars?: number` (preserving `MAX_FORMATTED_CHARS = 256 * 1024 * 1024` as the default for direct `core` callers). `FormattedOutputBuffer` throws `FormatOutputLimitError` (`extends RangeError`) when exceeded, and `formatXml` maps `FormatOutputLimitError` to `XML_FORMAT_OUTPUT_TOO_LARGE` (`diagnostics.xml.formatOutputTooLarge`, `source: 'core'`), keeping unexpected runtime errors under `XML_FORMAT_INTERNAL_ERROR`.
-   - `packages/app` passes `maxOutputChars: MAX_PREVIEW_BYTES` (`1,048,576`) to the worker and also enforces `enforceFormattedByteLimit(result, MAX_PREVIEW_BYTES)` via `utf8ByteLength`, rejecting multi-byte XML outputs whose UTF-16 character length fits within `1,048,576` chars but whose UTF-8 byte length exceeds `1 MiB` without mutating `<textarea>`.
+   - `packages/app` passes `maxOutputChars: MAX_PREVIEW_BYTES` (`1,048,576`) to the worker and also enforces `enforceFormattedByteLimit(result, MAX_PREVIEW_BYTES)` via `utf8ByteLength`, rejecting multi-byte XML outputs whose UTF-16 character length fits within `1,048,576` chars but whose UTF-8 byte length exceeds `1 MiB` (emitting `XML_FORMAT_OUTPUT_TOO_LARGE` with `diagnostics.xml.formatOutputTooLargeBytes`) without mutating `<textarea>`.
 2. **Explicit Format Failure Classification in UI (`classifyFormatFailure`):**
    - `packages/app` distinguishes three failure classes in `ValidationStatus`: parser well-formedness rejections (`'invalid'` -> `preview.formatInvalid` + `statusBar.notWellFormed`), output-limit rejections (`'output-too-large'` -> `format-failed` with `preview.formatOutputTooLarge` + `statusBar.formatFailed`), and internal/worker/timeout errors (`'internal-error'` -> `format-failed` with `preview.formatError` + `statusBar.formatFailed`, eliminating reuse of `preview.workerError`).
 3. **Web Worker Offloading (`@xmlens/workers`):**

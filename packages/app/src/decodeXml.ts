@@ -376,7 +376,7 @@ export function enforceFormattedByteLimit(
       {
         severity: 'error',
         code: 'XML_FORMAT_OUTPUT_TOO_LARGE',
-        messageKey: 'diagnostics.xml.formatOutputTooLarge',
+        messageKey: 'diagnostics.xml.formatOutputTooLargeBytes',
         params: {
           limit: maxUtf8Bytes,
           detail: `Formatted output (${actualBytes} UTF-8 bytes) exceeds the ${maxUtf8Bytes}-byte limit.`,
