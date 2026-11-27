@@ -167,7 +167,7 @@ An isolated spike was built under `spikes/codemirror/` (`index.html`, `main.ts`,
 
 ### A. Replaced by GitHub Actions CI (`e2e-spike` job, `.github/workflows/ci.yml`)
 
-Manual verification of Section A is **no longer required** unless CI fails; the `e2e-spike` job (`npm run test:e2e:spike`, building with `spikes/codemirror/vite.config.ts` and running `vite preview` on `127.0.0.1:3100` via `webServer.cwd: '../..'` because Playwright defaults `webServer.cwd` to the config file directory `spikes/codemirror/`) automatically checks across `chromium`, `firefox`, and `webkit`:
+Manual verification of Section A is **no longer required** unless CI fails; the `e2e-spike` job (`npm run test:e2e:spike`, building with `spikes/codemirror/vite.config.ts` and running `vite preview` on `127.0.0.1:3100` via `webServer.cwd: '../..'` because Playwright defaults `webServer.cwd` to the config file directory `spikes/codemirror/`) automatically checks across `chromium`, `firefox`, and `webkit` (status as of 2026-11-27 run `45974182477`: `3/6` passed across all 3 browsers including CSP `0`, `<style>` `0`, `adoptedStyleSheets > 0`, and Format/Undo/Redo/`Tab`; sole axe `label` failure on `spikes/codemirror/main.ts`'s `hidden-file-input` fixed via `'aria-hidden': 'true'`):
 
 1. Zero `securitypolicyviolation` events (captured from page start via `page.addInitScript`), zero `console.error`, and zero `pageerror` events under strict `style-src 'self'`.
 2. `#cm-host.shadowRoot` contains `0` `<style>` elements, `> 0` `adoptedStyleSheets`, and `.cm-content` `aria-label`.

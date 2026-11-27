@@ -7,6 +7,19 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0009] - 2026-11-27
+
+- **Sync:** direct
+- **Refs:** ADR-0005, ADR-0006, spikes/codemirror/main.ts, docs/adr/0006-e2e-and-a11y-tooling.md, docs/adr/0005-codemirror-and-csp.md, CHANGELOG.md
+
+### Fixed
+
+- Added `'aria-hidden': 'true'` (preserving `tabindex: '-1'`) to the visually hidden `<input class="hidden-file-input">` in `spikes/codemirror/main.ts` to match `packages/app/src/main.ts` and resolve the axe `label` violation observed in `e2e-spike` CI run `45974182477` across Chromium, Firefox, and WebKit without relaxing `spikes/codemirror/e2e.spec.ts` assertions.
+
+### Changed
+
+- Recorded the 2026-11-27 second `e2e-spike` CI run (`45974182477`, `3/6` tests passed) and `aria-hidden="true"` fix in `docs/adr/0006-e2e-and-a11y-tooling.md` (CI Job Design) and `docs/adr/0005-codemirror-and-csp.md` (Verification Checklist Section A), keeping `ADR-0006` Status conditional `Accepted` until the first green run.
+
 ## [DEV-0008] - 2026-11-27
 
 - **Sync:** direct

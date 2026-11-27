@@ -132,7 +132,12 @@ function mountSpike(): void {
 
   const fileInput = createEl('input', {
     className: 'hidden-file-input',
-    attrs: { type: 'file', accept: '.xml,.xsd,.xsl,.xslt,.sch,.rng,.svg', tabindex: '-1' },
+    attrs: {
+      type: 'file',
+      accept: '.xml,.xsd,.xsl,.xslt,.sch,.rng,.svg',
+      tabindex: '-1',
+      'aria-hidden': 'true',
+    },
   });
   const openBtn = createEl('button', {
     className: 'tb-btn',
