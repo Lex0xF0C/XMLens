@@ -1,7 +1,17 @@
 # ADR-0005: CodeMirror 6 Integration Under Strict CSP (M1b Preparation)
 
-- **Status:** Accepted in principle; spike complete — awaiting maintainer approval before replacing `<textarea>` in `packages/app`
-- **Date:** 2026-11-24 (spike results appended 2026-11-27)
+- **Status:** Accepted (provisional, 2026-11-27, conditional)
+- **Date:** 2026-11-24 (spike results and provisional conditions appended 2026-11-27)
+
+### Provisional Acceptance Conditions (2026-11-27)
+
+1. **`> 100 KB` gzipped exception (`AGENTS.md` §11):** The `+126.2–126.5 kB` gzipped bundle delta (~`10.57%` of the `1.5 MiB` budget) is approved **for CodeMirror 6 only**.
+2. **Primary verification via CI `e2e-spike`:** Automated verification runs via the GitHub Actions `e2e-spike` job across Chromium, Firefox, and WebKit (zero `securitypolicyviolation` via `page.addInitScript` + axe `wcag22aa`). Windows manual checklist retains **only Section B** (real IME, Tab exit + Search panel, Narrator/NVDA, High Contrast / `prefers-reduced-motion`); Section A is replaced by CI.
+3. **M1b production gating & escalation:** Replacing `<textarea>` in `packages/app` happens in a dedicated future task only **after** `e2e-spike` passes in all 3 browsers and manual Section B passes. If any browser fails Option A, **stop and return the decision to the maintainer** — do not automatically switch to Option C.
+4. **M1b integration design constraints:**
+   - File opening and sample loading must reset Undo history using a fresh `EditorState` (`view.setState(...)`), not a document replacement transaction.
+   - `ariaLabel` must update on i18n locale changes via `Compartment.reconfigure`.
+   - Continue omitting `EditorView.cspNonce` and `indentWithTab`.
 
 ## Context
 
@@ -56,10 +66,11 @@ CodeMirror 6 documents `EditorView.cspNonce` for apps that emit a per-request CS
 | `@codemirror/lang-xml` | `6.1.0`  | `MIT`   | `45,745` B          | `2024-03-06`     | `@lezer/xml` (`1.0.6`, `MIT`, `45,097` B), `@codemirror/autocomplete` (`6.20.4`, `MIT`, `256,194` B), `@lezer/common`, `@codemirror/view`, `@codemirror/state`, `@codemirror/language`                                                                    | `dev: true`                 |
 | `@codemirror/lint`     | `6.9.8`  | `MIT`   | `97,579` B          | `2026-11-13`     | `crelt`, `@codemirror/view`, `@codemirror/state`                                                                                                                                                                                                          | `dev: true`                 |
 | `@codemirror/search`   | `6.7.3`  | `MIT`   | `138,040` B         | `2026-11-25`     | `crelt`, `@codemirror/view`, `@codemirror/state`                                                                                                                                                                                                          | `dev: true`                 |
+| `@lezer/highlight`     | `1.2.5`  | `MIT`   | `99,935` B          | `2026-09-28`     | `@lezer/common` (`1.5.7`, `MIT`)                                                                                                                                                                                                                          | `dev: true` (direct)        |
 
-- **License compliance:** All 17 packages (7 direct + 10 transitive) installed in `package-lock.json` use the **`MIT`** license (`dev: true` only during the spike; zero non-MIT transitives, zero exceptions required in `scripts/license-exceptions.json`).
-- **Maintenance:** All packages except `@codemirror/lang-xml` (`2024-03-06`), `@lezer/xml` (`2024-12-27`), and `w3c-keyname` (`2023-06-07`) have late-2026 releases; all belong to the official CodeMirror / Lezer ecosystem.
-- **Gzipped bundle impact:** Measured via Vite production build on 2026-11-27 (see Spike Results below). Main-entry JS gzip delta is **`~126.2–126.5 kB` (`> 100 KB` gzipped threshold under `AGENTS.md` §11)**, keeping total JS+CSS around `~10.57%` of the `1.5 MiB` first-load budget.
+- **License compliance:** All 17 packages (8 direct `devDependencies` including `@lezer/highlight` imported directly by `spikes/codemirror/bridge.ts` + 9 transitive) installed in `package-lock.json` use the **`MIT`** license (`dev: true` only during the spike; zero non-MIT transitives, zero exceptions required in `scripts/license-exceptions.json`).
+- **Maintenance:** All packages except `@codemirror/lang-xml` (`2024-03-06`), `@lezer/xml` (`2024-12-27`), and `w3c-keyname` (`2023-06-07`) have late-2026 releases (`@lezer/highlight@1.2.5` published `2026-09-28`, `99,935` B unpacked); all belong to the official CodeMirror / Lezer ecosystem.
+- **Gzipped bundle impact:** Measured via Vite production build on 2026-11-27 (see Spike Results below). Main-entry JS gzip delta is **`~126.2–126.5 kB` (`> 100 KB` gzipped threshold under `AGENTS.md` §11; provisionally approved for CodeMirror 6 only on 2026-11-27)**, keeping total JS+CSS around `~10.57%` of the `1.5 MiB` first-load budget.
 
 ## Options Considered
 
@@ -135,44 +146,44 @@ An isolated spike was built under `spikes/codemirror/` (`index.html`, `main.ts`,
 | **Spike Total JS + CSS**                             | `516,920` B | —                | **`166,301` B**           | **`~10.57%`** (`~11.09%` of `1.5 MB`)     |
 
 - **Main-entry JS gzip delta:** `150,525 B - 24,291 B = 126,234 B` (`~123.28 KiB` / `126.53 kB` Vite-reported).
-- **Policy notice (`AGENTS.md` §11):** This gzipped delta **exceeds `100 KB` gzipped** (`> 100 KB`), so maintainer approval is explicitly required before moving CodeMirror 6 into `packages/app` `dependencies` in M1b. At the same time, total JS+CSS (`~166.3 KB` gzipped) leaves roughly `~89.4%` of the `1.5 MiB` first-load budget available for upcoming WASM validators (`libxml2-wasm`), XSLT, and visualizations.
+- **Policy notice (`AGENTS.md` §11):** This gzipped delta **exceeds `100 KB` gzipped** (`> 100 KB`), provisionally approved **only for CodeMirror 6** on 2026-11-27. Total JS+CSS (`~166.3 KB` gzipped) leaves roughly `~89.4%` of the `1.5 MiB` first-load budget available for upcoming WASM validators (`libxml2-wasm`), XSLT, and visualizations.
 
 ### 3. Compatibility & Integration Findings
 
 - **`@xmlens/core` & `@xmlens/workers`:**
   - `checkWellFormedness` UTF-16 `Diagnostic.range.offset` maps cleanly to `@codemirror/lint` (`from`, `to` clamped to `[0, doc.length]`), preserving CJK and surrogate-pair coordinates.
   - `formatXml` output integrates via `createFormatTransactionSpec` (`changes: { from: 0, to: doc.length, insert }` + `annotations: isolateHistory.of('full')`), giving deterministic single-step Undo/Redo and resolving the `ADR-0012` `textarea.setRangeText` browser variance.
+  - **M1b file/sample load rule:** Unlike `formatXml`, opening a file or loading the sample in `packages/app` MUST replace the editor state with a fresh `EditorState` (`view.setState(...)`) rather than a document transaction, so prior-document Undo history is cleared.
   - `getXPathAtOffset` works via `xpathWorkerClient` with `state.selection.main.head` and `shouldDiscardSpikeXPathResult` checking `view.composing` (`isComposing`), `requestEpoch`, text, and head offset.
   - `decodeXmlBytes` + `normalizeDecodedTextForEditor` (`LF` normalization, BOM stripping into `hasBom`) round-trips through CodeMirror `state.doc.toString()` back into `prepareXmlSaveBytes` (`CRLF` + BOM restoration).
 - **ShadowRoot & Accessibility:**
   - Setting `EditorView` `parent: shadowRoot` and `root: shadowRoot` causes `style-mod` to mount Constructable Stylesheets on `shadowRoot.adoptedStyleSheets`. CSS custom properties (`--bg-surface`, `--text-primary`, `--focus-ring`, `--cm-*`) cross the ShadowRoot boundary cleanly in CSS specs for Light, Dark, and High Contrast themes.
-  - Excluding `indentWithTab` from `keymap` preserves `Tab` / `Shift+Tab` focus exit out of the editor. Accessible naming uses `EditorView.contentAttributes.of({ 'aria-label': ... })` inside the ShadowRoot because `aria-labelledby` cannot cross a shadow boundary.
+  - Excluding `indentWithTab` from `keymap` preserves `Tab` / `Shift+Tab` focus exit out of the editor. Accessible naming uses `EditorView.contentAttributes.of({ 'aria-label': ... })` via `Compartment.reconfigure` inside the ShadowRoot because `aria-labelledby` cannot cross a shadow boundary.
 - **Remaining Concerns & Recommendation:**
-  - Live browser confirmation in Edge/Chrome/Firefox (especially Firefox/WebKit `adoptedStyleSheets` + `style-src 'self'`, search/lint panels inside `ShadowRoot`, and real Japanese IME composition) has not run yet in AI Studio.
-  - **Recommendation:** Proceed to M1b **only after** the maintainer runs the Windows checklist below (or enables the Playwright `e2e` CI job) and confirms zero `securitypolicyviolation` errors, clean axe results, working Japanese IME, and acceptance of the `~126 KB` gzipped bundle increase (`AGENTS.md` §11).
+  - Live browser confirmation in Chromium, Firefox, and WebKit (`adoptedStyleSheets` + `style-src 'self'`, search/lint panels inside `ShadowRoot`, and real Japanese IME composition) remains **unverified** inside AI Studio.
+  - **M1b Gate:** Wait for GitHub Actions `e2e-spike` (`chromium`, `firefox`, `webkit`) to pass green AND complete Manual Section B below before replacing `<textarea>` in `packages/app`. If any browser fails Option A, return to the maintainer without falling back to Option C.
 
-## Windows Edge / Chrome / Firefox Manual Verification Checklist (`spikes/codemirror/`)
+## Verification Checklist (`spikes/codemirror/`)
 
-Build and preview the isolated spike on Windows (without modifying `packages/app`):
+### A. Replaced by GitHub Actions CI (`e2e-spike` job, `.github/workflows/ci.yml`)
+
+Manual verification of Section A is **no longer required** unless CI fails; the `e2e-spike` job (`npm run test:e2e:spike`, building with `spikes/codemirror/vite.config.ts` and running `vite preview` on `127.0.0.1:3100`) automatically checks across `chromium`, `firefox`, and `webkit`:
+
+1. Zero `securitypolicyviolation` events (captured from page start via `page.addInitScript`), zero `console.error`, and zero `pageerror` events under strict `style-src 'self'`.
+2. `#cm-host.shadowRoot` contains `0` `<style>` elements, `> 0` `adoptedStyleSheets`, and `.cm-content` `aria-label`.
+3. `AxeBuilder` (`wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `wcag22aa`) reports `0` violations.
+4. **Format** → **Undo** → **Redo** flow and `Tab` focus exit (without inserting `\t`).
+
+### B. Manual-Only Windows Verification Checklist (Required Before M1b)
+
+To run locally on Windows if needed:
 
 ```bash
 npx vite build --config spikes/codemirror/vite.config.ts
 npx vite preview --config spikes/codemirror/vite.config.ts --host 127.0.0.1 --port 3100
 ```
 
-### A. Playwright-Automatable Checks (covered by `spikes/codemirror/e2e.spec.ts` when browsers are available)
-
-1. Open `http://127.0.0.1:3100/` in **Edge / Chrome** and **Firefox** (`vite preview`, strict `style-src 'self'`).
-2. Click **Load sample** (`#spike-sample`), confirm `#spike-status-state` shows `Well-formed`, `#spike-status-csp` shows `CSP violations: 0`, and DevTools Console shows zero CSP errors or exceptions.
-3. Inspect `#cm-host.shadowRoot` in DevTools Console: confirm `shadowRoot.querySelectorAll('style').length === 0`, `shadowRoot.adoptedStyleSheets.length > 0`, and `.cm-content` has `aria-label="XML Input"` (or `"XML 入力"` in `ja`).
-4. Click **Format** (`#spike-format`), **Undo** (`#spike-undo`), **Redo** (`#spike-redo`), verify formatting and undo/redo succeed with `CSP violations: 0`.
-5. Click **Verify Save Round-Trip** (`#spike-verify-save`) and confirm `Save check OK`; test opening a malformed XML file and clicking a diagnostic button to verify cursor jump and `@codemirror/lint` inline underline.
-6. Run axe DevTools (`wcag22aa`) in browser or `npx playwright test --config spikes/codemirror/playwright.config.ts` on a machine/CI runner with browsers installed.
-
-### B. Manual-Only Checks (Cannot Be Reliably Automated With Synthetic Events Alone)
-
-1. **Real Japanese IME composition & cancellation:** Focus the editor, enable Microsoft IME (Japanese), type `あいう` + convert + commit inside `<root><p></p></root>`, and cancel a conversion with `Escape`. Confirm no duplicated characters, status-bar `XPath` updates cleanly after commit without flickering mid-composition, and `CSP violations: 0`.
+1. **Real Japanese IME composition & cancellation (Edge/Chrome & Firefox):** Focus the editor, enable Microsoft IME (Japanese), type `あいう` + convert + commit inside `<root><p></p></root>`, and cancel a conversion with `Escape`. Confirm no duplicated characters, status-bar `XPath` updates cleanly after commit without flickering mid-composition, and `CSP violations: 0`.
 2. **Keyboard-only `Tab` exit & Search panel (`Ctrl+F`):** Focus the editor, press `Tab` and `Shift+Tab`, and confirm focus exits the editor cleanly (no keyboard trap). Press `Ctrl+F` (or click **Search**), navigate search panel inputs/buttons with `Tab`, and press `Escape` to return focus to the editor while confirming `CSP violations: 0`.
 3. **Screen reader announcement (Windows Narrator or NVDA):** Focus the editor and confirm the screen reader announces `XML Input` / `XML 入力` and editable role; navigate to a diagnostic item and confirm location/message readout.
 4. **Themes & High Contrast / `prefers-reduced-motion`:** Switch **Light / Dark / High contrast** in the spike toolbar, inspect syntax colors, selection background, gutter, and `2px` focus ring readability; verify cursor blinking stops when Windows animation effects are reduced.
-5. **Dev server nonce check (`ADR-0007` comparison):** Optionally run `npx vite --config spikes/codemirror/vite.config.ts --host 127.0.0.1 --port 3100`, edit CSS/TS to verify Vite `html.cspNonce` (`style-src 'self' 'nonce-...'`) + HMR works with zero CSP console errors, then return to `vite preview` for strict CSP sign-off.

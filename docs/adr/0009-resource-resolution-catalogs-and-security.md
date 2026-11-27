@@ -1,7 +1,7 @@
 # ADR-0009: Resource Resolution, XML Catalogs, and Project Security Boundaries
 
-- **Status:** Proposed (awaiting maintainer approval)
-- **Date:** 2026-11-25
+- **Status:** Accepted (direction, 2026-11-27); implementation gated on Spike R1 and extended Spike S4
+- **Date:** 2026-11-25 (updated 2026-11-27)
 
 ## Context
 
@@ -13,9 +13,11 @@ That design has three architectural issues in a browser-only static app:
 2. **CSP and CORS restrictions:** `packages/app/index.html` enforces `default-src 'self'` with no `connect-src` exception, and standards-body hosts rarely send permissive CORS headers.
 3. **Browser SSRF blocklist futility:** Browser JavaScript cannot inspect resolved DNS IP addresses or prevent DNS rebinding, so string-based localhost/private-IP checks are not a security boundary.
 
-This ADR proposes a two-phase **Bundle** architecture, synchronous pure `locate()` resolution, strict v1 network/entity security boundaries, and Spike **R1** / extended Spike **S4**.
+This ADR defines the two-phase **Bundle** architecture, synchronous pure `locate()` resolution, strict v1 network/entity security boundaries, and Spike **R1** / extended Spike **S4**.
 
-## Decisions Proposed (Maintainer Review Summary)
+**Status rationale (2026-11-27):** `AGENTS.md` §4.2.8–12 already enforce these security and resolver boundaries as binding repository rules; accepting the direction resolves the status mismatch with `AGENTS.md`. **Reopen rule:** Keep existing Unverified Items tracked below; if Spike R1 or extended Spike S4 results contradict any decision in this ADR, reopen this ADR before implementation.
+
+## Decisions (Accepted Direction; Gated on Spike R1 / Extended Spike S4)
 
 1. **Single shared Resource Resolver:** All engines (XSD, DTD, Schematron, XPath, XSLT) obtain external resources exclusively through the shared Resource Resolver / Bundle layer. Engines never open files, IndexedDB, or network URLs directly.
 2. **Two-phase Bundle model (`async` build → `sync` engine read):**

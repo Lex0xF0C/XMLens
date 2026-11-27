@@ -7,3 +7,4 @@ plugins/saxonjs/*.js
 playwright-report/
 test-results/
 .spike-dist/
+bun.lock

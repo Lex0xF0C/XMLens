@@ -1,7 +1,7 @@
 # ADR-0008: XML Project Model, Package Boundaries, and Persistence Layering
 
-- **Status:** Proposed (awaiting maintainer approval)
-- **Date:** 2026-11-25
+- **Status:** Accepted (direction, 2026-11-27); implementation gated on Spike R1 and extended Spike S4
+- **Date:** 2026-11-25 (updated 2026-11-27)
 
 ## Context
 
@@ -11,7 +11,9 @@ An external architecture proposal (Draft 1.0) reviewed on 2026-11-24 recommended
 
 This ADR defines the adapted **XML Project** model, clean package boundaries, manifest boundaries, and storage layering ahead of M3 implementation.
 
-## Decisions Proposed (Maintainer Review Summary)
+**Status rationale (2026-11-27):** `AGENTS.md` §4.2.8–12 already treat these project/storage boundaries as binding repository rules; accepting the architectural direction here eliminates the status inconsistency while keeping `packages/project` uncreated until M3. **Reopen rule:** If Spike R1 or extended Spike S4 produces findings that contradict any decision below, reopen this ADR before implementation.
+
+## Decisions (Accepted Direction; Gated on Spike R1 / Extended Spike S4)
 
 1. **Unify terminology on "Project":** **"Project"** is the canonical domain concept (virtual file tree + manifest). The earlier term **"Workspace"** in `docs/IMPLEMENTATION_PLAN.md` §3.1 is replaced by **Project** and is not retained as a separate concept.
 2. **Project composition & byte-level storage:** A Project consists of files, XML Catalogs, scenarios (validation and transformation associations), and portable non-security settings. File content is stored as raw **bytes** (`Uint8Array`) rather than decoded strings so declared encodings (e.g., UTF-8, UTF-16 LE/BE, ISO-8859-1) remain intact; decoding happens at the editor or engine boundary.

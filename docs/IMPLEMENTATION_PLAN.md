@@ -252,7 +252,7 @@ Because browsers enforce CORS and our v1 security posture avoids unsolicited out
 - **Compliance posture (keeps the "application, not distribution site" reading credible):** (1) the plugin is part of the editor and used by it; there is **no page, link, README text, release asset, or package** that offers the SaxonJS file as a download or presents the site as a way to obtain it; (2) no separate repository, branch, GitHub release, or npm package of ours contains or re-publishes it; (3) it is off by default and the app is fully usable without it; (4) the directory is not advertised, listed, or documented as a download location; (5) a build flag (`XMLENS_BUNDLE_SAXONJS`, default on for the official build) removes the plugin entirely so it can be dropped in one release if the licensor objects or the license changes; (6) maintainers monitor the pinned version's license and respond promptly to any request from the licensor. Sending Saxonica a courtesy notice or question later is optional and not a gate.
 - **Forks:** the build always places the license and notice files next to the plugin, so forks deploying their own Pages site also meet the notice condition. Forks remain responsible for their own compliance.
 
-### 5.6 XML Project and Resource Resolution (proposed: ADR-0008, ADR-0009)
+### 5.6 XML Project and Resource Resolution (accepted direction: ADR-0008, ADR-0009; gated on R1 / extended S4)
 
 - **Unified Project model:** Multi-file projects, OASIS XML Catalogs, and validation/transformation scenarios are unified under **Project** (`ADR-0008`, replacing the earlier "Workspace" term). File payloads are stored as `Uint8Array` bytes so non-UTF-8 encodings stay intact until decoding.
 - **Manifest & storage layering:** `xmlens.project.json` (`schemaVersion`) stores root entries, catalog pointers, scenarios, role overrides, and optional lowered limits—never a `files[]` inventory and never security permissions. Browser persistence adapters (IndexedDB primary; opt-in File System Access API and `webkitdirectory` import) reside in `packages/app`, behind a pure `ProjectFileSystem` interface in planned `packages/project` (`lib: ["ES2022"]`, acyclic dependency direction `core ← project ← workers ← app`).
@@ -360,18 +360,18 @@ Grid mode, refactoring actions, RELAX NG, XSD documentation generator, sample-in
 ## 10. Open decisions (need maintainer input)
 
 1. **Project name and repository owner/org** (final name; domain/Pages path).
-2. **UI framework:** Preact (proposed) vs. Svelte vs. plain Web Components.
+2. **UI framework — Decided (provisional, 2026-11-27):** Draft `docs/adr/0015-ui-framework.md` (`Status: Proposed`) before M2 comparing Preact + signals vs. Svelte vs. current plain TypeScript DOM (maintainer provisional leaning: Preact + signals; no packages installed yet).
 3. **Which validation WASM package** (`libxml2-wasm` vs. `xmllint-wasm`) after a short spike comparing browser support, size, maintenance, and license.
 4. **SaxonJS optional plugin:** decided — bundle, off by default (§5.5); proceed without written permission per ADR-0002. Open: behavior of the license for the exact version we pin; whether in-browser compile works (spike S1).
-5. **CSAF scope:** XML (CVRF) only, or add JSON/JSON Schema support? (CSAF 2.x is JSON.)
+5. **CSAF scope — Decided (provisional, 2026-11-27):** v1 supports CVRF (XML) only; CSAF 2.x (JSON / JSON Schema) will be reconsidered post-v1 as a P3 module.
 6. **Profile redistribution:** confirm licenses of OASIS schemas (Akoma Ntoso, LegalRuleML) for bundling versus upload-only.
 7. **Japanese terminology** (整形式 / 妥当性検査 etc.) glossary approval.
-8. **Telemetry:** none (proposed). Confirm that even privacy-preserving analytics are excluded.
+8. **Telemetry — Decided (provisional, 2026-11-27):** None; no analytics (including privacy-preserving analytics) will be introduced.
 9. **Default XSLT 1.0 engine** after spike S2 (WASM libxslt-based package) or SaxonJS-only.
 10. **Schematron approach** after spike S3 (own interpreter vs. XSLT skeleton).
 11. **`xmlens.project.json` manifest schema details** (`schemaVersion` 1 fields for scenarios, catalog entries, and optional lowered limits — before M3).
 12. **ZIP library candidate** for M5 import/export: license verification (`AGENTS.md` §4.1.3 / §4.1.7), bundle size, and maintenance status (currently **unverified**).
-13. **Post-v1 external network fetching:** confirm whether opt-in remote fetching is ever desired after v1; any inclusion requires a dedicated ADR and CSP `connect-src` revision (excluded from v1).
+13. **External network fetching — Decided (provisional, 2026-11-27):** Excluded in v1 per `ADR-0009` (no external fetching in v1; any future post-v1 opt-in requires a dedicated ADR and CSP `connect-src` revision).
 
 ---
 

@@ -7,6 +7,28 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0007] - 2026-11-27
+
+- **Sync:** direct
+- **Refs:** ADR-0005, ADR-0006, ADR-0008, ADR-0009, ADR-0014, ADR-0015, package.json, package-lock.json, .gitignore, .github/workflows/ci.yml, spikes/codemirror/e2e.spec.ts, AGENTS.md, docs/IMPLEMENTATION_PLAN.md, docs/adr/0005-codemirror-and-csp.md, docs/adr/0006-e2e-and-a11y-tooling.md, docs/adr/0008-xml-project-model-and-packages.md, docs/adr/0009-resource-resolution-catalogs-and-security.md, docs/adr/0014-xpath-at-cursor.md, docs/adr/0015-ui-framework.md, docs/feature-matrix.md, CHANGELOG.md
+
+### Added
+
+- Added `npm run test:e2e:spike` script in `package.json` (`vite build --config spikes/codemirror/vite.config.ts && playwright test --config spikes/codemirror/playwright.config.ts`, excluded from `npm run check`) and documented it in `AGENTS.md` §2 while keeping main-app `test:e2e` marked unimplemented.
+- Added isolated `e2e-spike` job to `.github/workflows/ci.yml` (`runs-on: ubuntu-latest`, reusing pinned 40-character `actions/checkout` and `actions/setup-node` SHAs, running `npx playwright install --with-deps chromium firefox webkit` and `npm run test:e2e:spike`, leaving `check`, `audit`, `permissions: contents: read`, and `pages.yml` untouched, and deferring `actions/upload-artifact` until its 40-char SHA is verified).
+- Declared `@lezer/highlight` (`^1.2.5`, `MIT`) as a direct root `devDependency` in `package.json` (matching its existing `package-lock.json` entry and direct import in `spikes/codemirror/bridge.ts`), verified via `npm run license:check` and `npm run notices:check`.
+- Drafted `docs/adr/0015-ui-framework.md` (`Status: Proposed`, no packages installed) comparing `preact@11.2.0` + `@preact/signals@2.11.4` (maintainer provisional leaning), `svelte@5.59.2`, and current plain TypeScript DOM using `npm view` license/maintenance/size data while marking tree-shaken gzip sizes `unverified`.
+
+### Changed
+
+- Updated `docs/adr/0005-codemirror-and-csp.md` to `Status: Accepted (provisional, 2026-11-27, conditional)` (approving `+126.2–126.5 kB` gzipped excess for CodeMirror 6 only, recording M1b `view.setState` history-reset and `Compartment.reconfigure` rules, retaining Section B manual Windows checklist, and marking Section A replaced by CI `e2e-spike`).
+- Updated `docs/adr/0006-e2e-and-a11y-tooling.md` (keeping conditional `Accepted` until the first green CI `e2e` / `e2e-spike` run and recording the `actions/upload-artifact` SHA TODO), `docs/adr/0014-xpath-at-cursor.md` (`Status: Accepted (2026-11-27)` with M1b CodeMirror migration notes), `docs/adr/0008-xml-project-model-and-packages.md` and `docs/adr/0009-resource-resolution-catalogs-and-security.md` (`Status: Accepted (direction, 2026-11-27); implementation gated on Spike R1 and extended Spike S4` with reopen rule and unchanged Unverified Items), `docs/IMPLEMENTATION_PLAN.md` (§5.6 heading sync and §10 provisional decisions #2, #5, #8, #13), and `docs/feature-matrix.md`.
+- Enhanced `spikes/codemirror/e2e.spec.ts` to collect `securitypolicyviolation` events via `page.addInitScript` alongside Playwright `console` (`error`) and `pageerror` listeners, and verify `0` `<style>` elements, `> 0` `adoptedStyleSheets`, Undo/Redo after Format, and `Tab` focus exit.
+
+### Removed
+
+- Deleted regenerated `bun.lock` from the workspace root and added `bun.lock` to `.gitignore` to keep `npm` / `package-lock.json` as the sole package lockfile.
+
 ## [DEV-0006] - 2026-11-27
 
 - **Sync:** direct

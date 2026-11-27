@@ -1,6 +1,6 @@
 # ADR-0006: Cross-Browser E2E & Accessibility Tooling (Playwright + axe)
 
-- **Status:** Accepted (2026-11-27; conditional: `devDependencies` only, unmodified, never bundled into `dist/` or GitHub Pages; `MPL-2.0` exceptions limited strictly to `@axe-core/playwright` and `axe-core`; Playwright browser binaries excluded from git and `dist/`; CI `e2e` job deferred)
+- **Status:** Accepted (2026-11-27; conditional: `devDependencies` only, unmodified, never bundled into `dist/` or GitHub Pages; `MPL-2.0` exceptions limited strictly to `@axe-core/playwright` and `axe-core`; Playwright browser binaries excluded from git and `dist/`; will be promoted to full `Accepted` once the GitHub Actions `e2e` / `e2e-spike` job achieves its first green run across Chromium, Firefox, and WebKit)
 - **Date:** 2026-11-24 (updated 2026-11-27)
 
 ## Context
@@ -39,8 +39,8 @@ Maintainer granted conditional acceptance of Playwright + axe under the constrai
 1. Installed `@playwright/test@1.65.1`, `@axe-core/playwright@4.14.1`, and `axe-core@4.14.1` strictly in root `devDependencies` (zero changes to runtime `dependencies` or `packages/*/package.json`).
 2. Restricted `scripts/license-exceptions.json` additions solely to `@axe-core/playwright` and `axe-core` (`~4.14.1`, `MPL-2.0`, `reviewed-by: "maintainer"`).
 3. Added `playwright-report/`, `test-results/`, and `.spike-dist/` to `.gitignore` (and `eslint.config.mjs` `ignores`). Playwright browser binaries are never committed to git and never copied into `dist/`.
-4. Prepared the isolated CodeMirror 6 spike E2E + axe spec (`spikes/codemirror/playwright.config.ts` and `spikes/codemirror/e2e.spec.ts`) targeting the static `vite preview` server (`http://127.0.0.1:3100/`).
-5. Kept `.github/workflows/ci.yml` untouched for now; CI `e2e` job design and review notes are recorded below for a future CI PR.
+4. Prepared the isolated CodeMirror 6 spike E2E + axe spec (`spikes/codemirror/playwright.config.ts` and `spikes/codemirror/e2e.spec.ts`) targeting the static `vite preview` server (`http://127.0.0.1:3100/`) and added `npm run test:e2e:spike` to `package.json`.
+5. Added the isolated `e2e-spike` job to `.github/workflows/ci.yml` without modifying `check`, `audit`, `permissions` (`contents: read`), or `.github/workflows/pages.yml`. Full-app `npm run test:e2e` remains deferred until M1b.
 
 ## AI Studio Environment Check (Read-Only Probe)
 
@@ -49,14 +49,14 @@ Probed the current AI Studio Linux container without installing Playwright brows
 - **Kernel / runtime:** `Linux localhost 4.19.0-gvisor #1 SMP x86_64 GNU/Linux` (gVisor sandbox), running as `uid=0(root)` with ~`504 GB` available disk and `apt-get` / `dpkg` available.
 - **Pre-installed browsers:** None (`chromium`, `chromium-browser`, `google-chrome`, `firefox`, `webkit`, and system browser executables are absent).
 - **System shared libraries:** `libnss3.so`, `libgbm.so.1`, `libasound.so.2`, and `libwayland-server.so.0` are present; GTK3/WebKitGTK/Firefox runtime dependencies are **not** verified present.
-- **Feasibility assessment:** Running Playwright browsers (`playwright install`) in this AI Studio environment remains **unverified** (binaries would not persist across workspace resets, must never be committed to git or `dist/`, and gVisor commonly blocks Chromium user namespaces without `--no-sandbox`). Therefore, automated Playwright execution is **unverified** in AI Studio and awaits Windows manual execution or a future GitHub Actions `e2e` job.
+- **Feasibility assessment:** Running Playwright browsers (`playwright install`) in this AI Studio environment remains **unverified** (binaries would not persist across workspace resets, must never be committed to git or `dist/`, and gVisor commonly blocks Chromium user namespaces without `--no-sandbox`). Therefore, automated Playwright execution is **unverified** in AI Studio and runs in GitHub Actions `e2e-spike`.
 
-## Proposed CI Job Design & Review Notes (Deferred — `.github/workflows/ci.yml` Unchanged)
+## CI Job Design (`e2e-spike` Added to `.github/workflows/ci.yml`)
 
-When adding E2E + accessibility tests as a **separate CI job** in `.github/workflows/ci.yml` (isolated from the fast `check` and `audit` jobs so `npm run check` stays fast and works without browser downloads):
+The `e2e-spike` job runs in `.github/workflows/ci.yml` as a separate job alongside `check` and `audit` (keeping `npm run check` fast without browser downloads, and keeping `permissions: contents: read` unchanged):
 
 ```yaml
-e2e:
+e2e-spike:
   runs-on: ubuntu-latest
   steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -66,21 +66,15 @@ e2e:
         cache: 'npm'
     - run: npm ci
     - run: npx playwright install --with-deps chromium firefox webkit
-    - run: npm run build
-    - run: npm run test:e2e
-    - if: failure()
-      uses: actions/upload-artifact@<pinned-40-char-sha>
-      with:
-        name: playwright-report
-        path: playwright-report/
+    - run: npm run test:e2e:spike
 ```
 
-Review checklist before enabling the CI job:
+Review notes & remaining TODOs:
 
-- **Action SHA pinning:** Match `.github/workflows/ci.yml`'s 40-character commit SHA pinning policy (`actions/checkout` and `actions/setup-node` SHAs shown above match current `ci.yml`; look up and pin the exact 40-char SHA for `actions/upload-artifact` before committing).
-- **Production static target (`npm run preview`):** Run E2E tests against the built static site (`vite preview` / `npm run preview`) rather than `vite dev`, so the strict `<meta http-equiv="Content-Security-Policy">` (`style-src 'self'`) is exercised under production conditions.
-- **Playwright caching & runtime:** `npx playwright install --with-deps chromium firefox webkit` downloads ~500+ MB on `ubuntu-latest`; keep the job separate from `check` and set `retention-days` on failure artifacts if needed.
-- **Telemetry / assertions:** Assert **zero** `console.error`, `pageerror`, and `securitypolicyviolation` events in every browser (`chromium`, `firefox`, `webkit`), plus `wcag22aa` axe checks and sub-path hosting parity (`/XMLens/`).
+- **TODO (`actions/upload-artifact`):** Uploading `playwright-report/` on failure (`if: failure()`) is intentionally omitted until the exact 40-character commit SHA for `actions/upload-artifact` is verified (never guess SHAs).
+- **Production static target (`vite preview`):** `test:e2e:spike` builds `spikes/codemirror/` and launches `vite preview` (`127.0.0.1:3100`) rather than `vite dev`, exercising strict `style-src 'self'`.
+- **Telemetry / assertions:** `spikes/codemirror/e2e.spec.ts` attaches `page.addInitScript` for `securitypolicyviolation` events alongside `console` (`error`) and `pageerror` listeners, asserting zero errors across `chromium`, `firefox`, and `webkit`, plus `wcag22aa` axe checks.
+- **Promotion criterion:** Once `e2e-spike` (and later `e2e` for the main app) achieves its first green CI run, update this ADR's Status from conditional `Accepted` to `Accepted`.
 
 ## Fallback: Manual Maintainer Checklist for Windows Browsers
 

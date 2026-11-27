@@ -1,6 +1,6 @@
 # ADR-0014: Cursor-Position XPath Breadcrumb (`getXPathAtOffset`)
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-27)
 - **Date:** 2026-11-27
 
 ## Context
@@ -50,4 +50,12 @@ Implementing this safely in XMLens requires addressing four design constraints:
 ## Unverified Assumptions & Pending Verification
 
 - Live browser testing of `<textarea>` caret events, CJK IME composition, `selectionStart` timing across Chromium, Firefox, and WebKit, and Windows/macOS execution has not yet been performed (Node/Vitest unit verification only).
-- Automated Playwright + axe accessibility checks remain pending `ADR-0006` implementation.
+- Automated Playwright + axe accessibility checks remain pending `ADR-0006` implementation (`e2e-spike` targets the isolated spike first; main-app `e2e` follows M1b).
+
+## M1b Migration Note (CodeMirror 6)
+
+When Milestone M1b migrates the editor surface in `packages/app` from `<textarea>` to CodeMirror 6 (`ADR-0005`):
+
+- `@xmlens/core`'s `getXPathAtOffset(xml, offset)` and `@xmlens/workers`'s `createXPathWorkerClient` RPC API remain **unchanged**.
+- The editor caret offset source changes from `textarea.selectionStart` to CodeMirror's `state.selection.main.head`.
+- Discarding stale async worker results and suppressing updates while IME composition is active uses the `shouldDiscardSpikeXPathResult` pattern proven in `spikes/codemirror/bridge.ts` (`isComposing` from `view.composing` alongside `requestEpoch`, document text, and head offset checks).
