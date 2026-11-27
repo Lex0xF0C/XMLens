@@ -71,6 +71,7 @@ e2e-spike:
 
 Review notes & remaining TODOs:
 
+- **Initial CI failure & `webServer.cwd` requirement (2026-11-27):** The first `e2e-spike` CI run failed during Playwright `webServer` startup with `[WebServer] ✘ [ERROR] Could not resolve ".../spikes/codemirror/spikes/codemirror/vite.config.ts"` (`Exit code: 1`). Per Playwright's `TestConfigWebServer.cwd` documentation and runtime loader (`playwright@1.65.1`, `path.resolve(configDir, cwd)`), `webServer.cwd` defaults to the directory containing `playwright.config.ts` (`spikes/codemirror/`), and relative `cwd` values are resolved from that directory. Because `spikes/codemirror/playwright.config.ts` invokes `--config spikes/codemirror/vite.config.ts` from the repository root, `webServer.cwd: '../..'` is required.
 - **TODO (`actions/upload-artifact`):** Uploading `playwright-report/` on failure (`if: failure()`) is intentionally omitted until the exact 40-character commit SHA for `actions/upload-artifact` is verified (never guess SHAs).
 - **Production static target (`vite preview`):** `test:e2e:spike` builds `spikes/codemirror/` and launches `vite preview` (`127.0.0.1:3100`) rather than `vite dev`, exercising strict `style-src 'self'`.
 - **Telemetry / assertions:** `spikes/codemirror/e2e.spec.ts` attaches `page.addInitScript` for `securitypolicyviolation` events alongside `console` (`error`) and `pageerror` listeners, asserting zero errors across `chromium`, `firefox`, and `webkit`, plus `wcag22aa` axe checks.

@@ -7,6 +7,19 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0008] - 2026-11-27
+
+- **Sync:** direct
+- **Refs:** ADR-0005, ADR-0006, spikes/codemirror/playwright.config.ts, docs/adr/0006-e2e-and-a11y-tooling.md, docs/adr/0005-codemirror-and-csp.md, CHANGELOG.md
+
+### Fixed
+
+- Fixed `e2e-spike` Playwright `webServer` startup failure where `spikes/codemirror/playwright.config.ts` defaulted `webServer.cwd` to the config file directory (`spikes/codemirror/`), doubling the root-relative `--config spikes/codemirror/vite.config.ts` path; added `cwd: '../..'` (resolved by Playwright relative to the config directory, without Node globals).
+
+### Changed
+
+- Documented the 2026-11-27 initial `e2e-spike` CI failure and Playwright `webServer.cwd` behavior in `docs/adr/0006-e2e-and-a11y-tooling.md` (CI Job Design) and `docs/adr/0005-codemirror-and-csp.md` (Verification Checklist Section A), keeping `ADR-0006` Status conditional `Accepted` until the first green CI run.
+
 ## [DEV-0007] - 2026-11-27
 
 - **Sync:** direct
