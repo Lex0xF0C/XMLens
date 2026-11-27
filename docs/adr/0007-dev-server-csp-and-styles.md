@@ -1,7 +1,7 @@
 # ADR-0007: Vite Dev Server CSS Injection vs. Strict Meta CSP
 
-- **Status:** Proposed (awaiting maintainer decision; CSP in `packages/app/index.html` unchanged)
-- **Date:** 2026-11-24
+- **Status:** Accepted (2026-11-27; with constraints: canonical strict CSP preserved untouched in `packages/app/index.html`; `serve`-only per-process nonce + `ws:`/`wss:` in `vite serve`; zero `'unsafe-inline'` / `'unsafe-eval'`; automated build CSP invariance test)
+- **Date:** 2026-11-24 (updated 2026-11-27)
 
 ## Context
 
@@ -13,45 +13,54 @@ default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; o
 
 In Milestone M0 closure, `styles.css` was moved from `packages/app/public/` into `packages/app/src/styles.css` and imported from `packages/app/src/main.ts` so Vite bundles it into `dist/assets/index-*.css` (`<link rel="stylesheet" href="./assets/index-*.css">`).
 
-During Task 8 verification, we inspected what both `npm run dev` (`vite`) and `npm run build && npm run preview` (`vite preview`) actually serve over HTTP, alongside `node_modules/vite/dist/client/client.mjs`.
+During M0 Task 8 and M1 preparation (`vite@7.3.8`), we inspected what both `npm run dev` (`vite`) and `npm run build && npm run preview` (`vite preview`) serve over HTTP, alongside `node_modules/vite/dist/node/chunks/config.js` and `node_modules/vite/dist/client/client.mjs`.
 
 ## Verified Findings
 
 1. **Production build (`npm run build` / `npm run preview`):**
-   - `dist/index.html` contains zero `<style>` tags and links `./assets/index-*.css` and `./assets/index-*.js` from the same origin (`'self'`), using zero WebSockets.
-   - Live browser rendering in this AI Studio environment is **unverified** (no Chromium/Firefox/WebKit binary or screenshot tool is installed), so visual inspection and browser console CSP checks require the maintainer manual checklist.
-2. **Development server (`npm run dev` / `vite`):**
-   - `curl http://127.0.0.1:3000/src/styles.css` shows Vite transforms `import './styles.css'` into a JavaScript module calling `__vite__updateStyle(__vite__id, __vite__css)`.
-   - Inspecting `node_modules/vite/dist/client/client.mjs` (`updateStyle`) confirms Vite creates `document.createElement("style")` with `style.textContent = content` and appends it to `document.head` without a nonce.
-   - Because `packages/app/index.html` serves `style-src 'self'` (without `'unsafe-inline'` or a matching nonce) during `vite dev`, **browsers will block Vite's injected `<style data-vite-dev-id="...">` elements in `npm run dev`**, leaving the dev server unstyled and emitting CSP `style-src` console violations.
-   - Vite dev's HMR client (`/@vite/client`) also opens `new WebSocket(..., "vite-hmr")` (`connect-src` falls back to `default-src 'self'`). Whether `ws:` on the same host/port is permitted or blocked by `default-src 'self'` across Chromium/Firefox/WebKit in `vite dev` is **unverified** in a live browser here, though Vite HMR WebSocket errors are non-fatal to initial rendering.
+   - `dist/index.html` contains zero `<style>` tags, zero `nonce-`, zero `ws:`/`wss:`, and links `./assets/index-*.css` and `./assets/index-*.js` from the same origin (`'self'`).
+   - Live browser rendering in this AI Studio environment is **unverified** (no Chromium/Firefox/WebKit binary is installed), so visual inspection and browser console CSP checks require the maintainer manual checklist or E2E CI.
+2. **Development server (`npm run dev` / `vite`) without nonce support:**
+   - Vite transforms `import './styles.css'` into a JavaScript module calling `__vite__updateStyle(__vite__id, __vite__css)`.
+   - Inspecting `node_modules/vite/dist/client/client.mjs` (`updateStyle` and `ErrorOverlay`) confirms Vite creates `<style data-vite-dev-id="...">` elements in `document.head` and reads `document.querySelector("meta[property=csp-nonce]")?.nonce`.
+   - Under `style-src 'self'` without a nonce, browsers block Vite's injected `<style data-vite-dev-id="...">` elements in `npm run dev`.
+3. **Vite `html.cspNonce` (`node_modules/vite/dist/node/chunks/config.js` & `client.mjs`):**
+   - Verified in `vite@7.3.8` (`config.js`): configuring `html: { cspNonce }` runs Vite's internal HTML `preHooks` to inject `<meta property="csp-nonce" nonce="<value>">` and `postHooks` to add `nonce="<value>"` to `<script>`, `<style>`, and `<link>` elements.
+   - Verified in `client.mjs`: Vite's HMR client reads `document.querySelector("meta[property=csp-nonce]")?.nonce` and attaches `style.setAttribute("nonce", cspNonce)` on injected `<style data-vite-dev-id="...">` elements and `ErrorOverlay` stylesheets.
+   - Verified via live `vite serve` HTTP probe (`http://127.0.0.1:3099/`): served HTML contained `<script type="module" src="/@vite/client" nonce="...">`, `<meta property="csp-nonce" nonce="...">`, and the `serve`-transformed CSP `<meta>` tag with `'nonce-...'` and `connect-src 'self' ws: wss:`.
+   - **Remaining unverified item:** Live browser evaluation of `meta.nonce` IDL property readability and HMR `<style>` / WebSocket execution in Chromium, Firefox, and WebKit under `<meta http-equiv="Content-Security-Policy">` is **unverified** here because no browser binary is installed in AI Studio.
 
-## Options Considered
+## Candidates Compared (2026-11-27 Maintainer Review)
 
-### Option 1: Inject `<meta http-equiv="Content-Security-Policy">` Only in Production Builds (`transformIndexHtml` with `apply: 'build'`)
+| Candidate                                              | CSP Impact in `vite serve`                                                                                                                        | Dev HMR & Future Compatibility                                             | Decision                                  |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------- |
+| **(a) Static `<link rel="stylesheet">` for shell CSS** | Keeps `style-src 'self'` identical                                                                                                                | CSS HMR falls back to reload; fails for JS-imported styles                 | Not adopted                               |
+| **(b) Vite `html.cspNonce` (`serve` mode only)**       | Keeps `script-src 'self'`; adds per-process `style-src 'nonce-...'` + `connect-src 'self' ws: wss:`; **zero** `'unsafe-inline'` / `'unsafe-eval'` | Supports Vite CSS HMR + ErrorOverlay; cleanly isolated in `vite.config.ts` | **Adopted** (with strict constraints)     |
+| **(c) Dev-only `style-src 'unsafe-inline'` + `ws:`**   | Relaxes `style-src` in dev                                                                                                                        | Weakens dev CSP; acceptable only as last resort                            | Rejected (not needed because (b) applies) |
 
-Remove the static `<meta http-equiv="Content-Security-Policy">` tag from the source `packages/app/index.html` (or keep a dev-only exclusion) and inject the strict CSP meta tag in `vite.config.ts` via a plugin `{ name: 'xmlens-csp', apply: 'build', transformIndexHtml(...) }`.
+## Decision & Constraints
 
-- **Pros:** `npm run dev` renders styles and HMR normally without loosening production CSP.
-- **Cons / Risk (Dev/Prod Divergence):** Removing CSP during `npm run dev` means developers will **not** catch CSP violations (such as inline `<style>`, inline `<script>`, or external fetches) during day-to-day `vite dev` coding unless they also run `npm run build && npm run preview` (and E2E tests always run against `vite preview`).
+Adopt **Candidate (b)** strictly for `vite serve`, while keeping `packages/app/index.html` completely unchanged as the single canonical source of truth for production CSP:
 
-### Option 2: Keep Source `packages/app/index.html` CSP Unchanged and Inject a Dev-Only Stylesheet Link / Use `npm run build && npm run preview`
+1. **Canonical source untouched:** `packages/app/index.html` retains the exact production CSP meta tag:
+   ```text
+   default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self';
+   ```
+2. **Scoped strictly to `command === 'serve'`:** In `vite.config.ts` (`createXmlensViteConfig`), only when `env.command === 'serve'`:
+   - Generate a fresh per-process 128-bit random Base64 nonce via Web Crypto (`globalThis.crypto.getRandomValues` + `btoa`).
+   - Pass `html: { cspNonce: devNonce }` to Vite.
+   - Attach `createDevCspPlugin(devNonce)` (`apply: 'serve'`, `order: 'pre'`) replacing `PRODUCTION_CSP` in served HTML with:
+     `default-src 'self'; script-src 'self'; style-src 'self' 'nonce-${nonce}'; connect-src 'self' ws: wss:; img-src 'self' data:; object-src 'none'; base-uri 'self';`
+   - Never inject `'unsafe-inline'` or `'unsafe-eval'`.
+3. **Production build (`command === 'build'`) invariant:** Neither `html.cspNonce` nor `createDevCspPlugin` is registered when `command === 'build'`.
+4. **Automated regression test (`scripts/csp-build.test.mjs`):** Runs in `npm run test` / `npm run check` to verify:
+   - `packages/app/index.html` source matches `PRODUCTION_CSP` exactly.
+   - Programmatic `vite build` output `index.html` matches `PRODUCTION_CSP` exactly with zero `'unsafe-inline'`, `'unsafe-eval'`, `nonce-`, `csp-nonce`, `ws:`, or `wss:`.
+   - `serve` mode produces a per-process nonce and `ws:`/`wss:` without `'unsafe-inline'` or `'unsafe-eval'`.
+5. **Production CSP verification rule:** All E2E (`ADR-0006`) and manual security/CSP sign-off checks MUST target `npm run build && npm run preview` (never `vite dev`).
 
-Keep `<meta http-equiv="Content-Security-Policy">` directly in `packages/app/index.html` (always active in `dist/` and visible in source) and serve `styles.css` as a regular static `<link rel="stylesheet" href="./src/styles.css">` in dev (or verify UI exclusively via `npm run build && npm run preview`).
+## Consequences
 
-- **Pros:** Zero dev/prod divergence for CSP enforcement (`vite dev` and `vite preview` enforce the exact same policy); a `<link rel="stylesheet" href="./src/styles.css">` is valid under `style-src 'self'` in Vite dev because Vite serves `/src/styles.css` directly when requested via `<link>` (whereas ES `import './styles.css'` triggers JS `__vite__updateStyle`). Note: HMR CSS hot-swapping would fall back to page reload if `<link>` is used instead of module CSS import, or Vite dev's JS CSS import can be avoided for the shell stylesheet.
-- **Cons:** If future code (such as CodeMirror CSS or worker/UI helpers) uses JS CSS injection in dev, `vite dev` would still trigger CSP unless Option 1 or Shadow DOM (`adoptedStyleSheets`, `ADR-0005`) is used.
-
-### Option 3: Dev-Only Vite Middleware / HTML Transform Relaxing CSP Only in `serve` Mode (Keeping Strict CSP in `packages/app/index.html` Source)
-
-Keep the strict `<meta http-equiv="Content-Security-Policy">` in `packages/app/index.html` as the canonical source of truth, and only during `apply: 'serve'` allow Vite dev's HMR `<style>` (`'unsafe-inline'` in `style-src` + `ws:` in `connect-src`, **never** applied in `apply: 'build'`).
-
-- **Pros:** `packages/app/index.html` remains the single readable canonical CSP for production, and `npm run dev` stays functional with HMR.
-- **Cons:** Same dev/prod divergence risk as Option 1 — a developer running only `npm run dev` would not see `style-src` or `ws:` violations until running `npm run preview` / E2E CI.
-
-## Decision Requested From Maintainer
-
-No change has been made to `packages/app/index.html` or `vite.config.ts`. Maintainer input is requested on whether to:
-
-1. Keep `packages/app/index.html` untouched and document `npm run build && npm run preview` as the CSP-verified local preview (or move shell CSS to `<link>` if desired), **or**
-2. Adopt **Option 1** or **Option 3** (`apply: 'build'` / `apply: 'serve'` CSP handling in `vite.config.ts`) paired with running all E2E/CSP checks exclusively against `npm run preview`.
+- `npm run dev` supports Vite CSS HMR without weakening CSP with `'unsafe-inline'` or `'unsafe-eval'`.
+- `dist/index.html` (and GitHub Pages) remains bit-for-bit aligned with `packages/app/index.html`'s canonical strict CSP, guarded automatically by `scripts/csp-build.test.mjs`.
+- Note on Chromium/Firefox/WebKit runtime verification: if any browser blocks Vite's `meta[property=csp-nonce]` lookup or `<style nonce>` handling during manual `npm run dev` checks on Windows, report the `securitypolicyviolation` details before considering any fallback.

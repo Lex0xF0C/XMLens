@@ -29,7 +29,17 @@
     "check": "npm run lint && npm run format:check && npm run typecheck && npm run test && npm run i18n:check && npm run plugins:guard && npm run license:check && npm run notices:check && npm run changelog:check"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.1",
+    "@codemirror/commands": "^6.11.2",
+    "@codemirror/lang-xml": "^6.1.0",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/lint": "^6.9.8",
+    "@codemirror/search": "^6.7.3",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.44.2",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.1",
+    "axe-core": "^4.14.1",
     "eslint": "^10.15.0",
     "prettier": "^3.10.1",
     "typescript": "^5.8.3",

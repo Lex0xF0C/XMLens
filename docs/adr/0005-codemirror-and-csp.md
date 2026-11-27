@@ -1,7 +1,7 @@
 # ADR-0005: CodeMirror 6 Integration Under Strict CSP (M1b Preparation)
 
-- **Status:** Accepted in principle; spike gated on ADR-0006 (test harness decision)
-- **Date:** 2026-11-24
+- **Status:** Accepted in principle; spike complete — awaiting maintainer approval before replacing `<textarea>` in `packages/app`
+- **Date:** 2026-11-24 (spike results appended 2026-11-27)
 
 ## Context
 
@@ -47,19 +47,19 @@ CodeMirror 6 documents `EditorView.cspNonce` for apps that emit a per-request CS
 
 ### 3. Candidate Packages, Licenses, and Sizes
 
-| Package                | Version   | License | Unpacked Size (npm) | Last npm Publish | Direct Dependencies                                                                                                                                                                                                                                       |
-| ---------------------- | --------- | ------- | ------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@codemirror/state`    | `6.7.6`   | `MIT`   | `440,367` B         | `2026-09-22`     | `@marijn/find-cluster-break` (`1.0.4`, `MIT`, `15,261` B)                                                                                                                                                                                                 |
-| `@codemirror/view`     | `6.43.15` | `MIT`   | `1,264,544` B       | `2026-10-19`     | `crelt` (`1.0.7`, `MIT`, `6,020` B), `style-mod` (`4.1.5`, `MIT`, `23,260` B), `w3c-keyname` (`2.2.8`, `MIT`, `8,381` B), `@codemirror/state`                                                                                                             |
-| `@codemirror/commands` | `6.11.1`  | `MIT`   | `246,640` B         | `2026-09-15`     | `@lezer/common`, `@codemirror/view`, `@codemirror/state`, `@codemirror/language`                                                                                                                                                                          |
-| `@codemirror/language` | `6.13.1`  | `MIT`   | `291,304` B         | `2026-10-07`     | `@lezer/lr` (`1.4.12`, `MIT`, `169,738` B), `@lezer/common` (`1.5.6`, `MIT`, `251,404` B), `@lezer/highlight` (`1.2.5`, `MIT`, `99,935` B), `style-mod`, `@codemirror/streamparser` (`6.0.0`, `MIT`, `23,256` B), `@codemirror/view`, `@codemirror/state` |
-| `@codemirror/lang-xml` | `6.1.0`   | `MIT`   | `45,745` B          | `2024-03-06`     | `@lezer/xml` (`1.0.6`, `MIT`, `45,097` B), `@codemirror/autocomplete` (`6.20.4`, `MIT`, `256,194` B), `@lezer/common`, `@codemirror/view`, `@codemirror/state`, `@codemirror/language`                                                                    |
-| `@codemirror/lint`     | `6.9.8`   | `MIT`   | `97,579` B          | `2026-11-13`     | `crelt`, `@codemirror/view`, `@codemirror/state`                                                                                                                                                                                                          |
-| `@codemirror/search`   | `6.7.2`   | `MIT`   | `137,655` B         | `2026-08-31`     | `crelt`, `@codemirror/view`, `@codemirror/state`                                                                                                                                                                                                          |
+| Package                | Version  | License | Unpacked Size (npm) | Last npm Publish | Direct Dependencies                                                                                                                                                                                                                                       | Scope (`package-lock.json`) |
+| ---------------------- | -------- | ------- | ------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| `@codemirror/state`    | `6.7.6`  | `MIT`   | `440,367` B         | `2026-09-22`     | `@marijn/find-cluster-break` (`1.0.4`, `MIT`, `15,261` B)                                                                                                                                                                                                 | `dev: true`                 |
+| `@codemirror/view`     | `6.44.2` | `MIT`   | `1,280,040` B       | `2026-11-26`     | `crelt` (`1.0.7`, `MIT`, `6,020` B), `style-mod` (`4.1.5`, `MIT`, `23,260` B), `w3c-keyname` (`2.2.8`, `MIT`, `8,381` B), `@codemirror/state`                                                                                                             | `dev: true`                 |
+| `@codemirror/commands` | `6.11.2` | `MIT`   | `246,833` B         | `2026-11-25`     | `@lezer/common`, `@codemirror/view`, `@codemirror/state`, `@codemirror/language`                                                                                                                                                                          | `dev: true`                 |
+| `@codemirror/language` | `6.13.1` | `MIT`   | `291,304` B         | `2026-10-07`     | `@lezer/lr` (`1.4.13`, `MIT`, `170,304` B), `@lezer/common` (`1.5.7`, `MIT`, `251,974` B), `@lezer/highlight` (`1.2.5`, `MIT`, `99,935` B), `style-mod`, `@codemirror/streamparser` (`6.0.0`, `MIT`, `23,256` B), `@codemirror/view`, `@codemirror/state` | `dev: true`                 |
+| `@codemirror/lang-xml` | `6.1.0`  | `MIT`   | `45,745` B          | `2024-03-06`     | `@lezer/xml` (`1.0.6`, `MIT`, `45,097` B), `@codemirror/autocomplete` (`6.20.4`, `MIT`, `256,194` B), `@lezer/common`, `@codemirror/view`, `@codemirror/state`, `@codemirror/language`                                                                    | `dev: true`                 |
+| `@codemirror/lint`     | `6.9.8`  | `MIT`   | `97,579` B          | `2026-11-13`     | `crelt`, `@codemirror/view`, `@codemirror/state`                                                                                                                                                                                                          | `dev: true`                 |
+| `@codemirror/search`   | `6.7.3`  | `MIT`   | `138,040` B         | `2026-11-25`     | `crelt`, `@codemirror/view`, `@codemirror/state`                                                                                                                                                                                                          | `dev: true`                 |
 
-- **License compliance:** All 17 packages (7 direct + 10 transitive) use the **`MIT`** license, matching `AGENTS.md` §4.1.3 with zero license exceptions needed.
-- **Maintenance:** All packages except `@codemirror/lang-xml` (`2024-03-06`) and `@lezer/xml` (`2024-12-27`) and `w3c-keyname` (`2023-06-07`) have 2026 releases; all belong to the official CodeMirror / Lezer ecosystem.
-- **Gzipped bundle impact:** Total npm `unpackedSize` across all 17 packages is `~3.14 MB` (which includes TypeScript declarations, source maps, CommonJS/ESM builds, and docs). Exact tree-shaken minified + gzipped Vite output size is **unverified** until installed and built against `IMPLEMENTATION_PLAN.md` §7 (`<= 1.5 MB` gzipped JS+WASM first-load budget).
+- **License compliance:** All 17 packages (7 direct + 10 transitive) installed in `package-lock.json` use the **`MIT`** license (`dev: true` only during the spike; zero non-MIT transitives, zero exceptions required in `scripts/license-exceptions.json`).
+- **Maintenance:** All packages except `@codemirror/lang-xml` (`2024-03-06`), `@lezer/xml` (`2024-12-27`), and `w3c-keyname` (`2023-06-07`) have late-2026 releases; all belong to the official CodeMirror / Lezer ecosystem.
+- **Gzipped bundle impact:** Measured via Vite production build on 2026-11-27 (see Spike Results below). Main-entry JS gzip delta is **`~126.2–126.5 kB` (`> 100 KB` gzipped threshold under `AGENTS.md` §11)**, keeping total JS+CSS around `~10.57%` of the `1.5 MiB` first-load budget.
 
 ## Options Considered
 
@@ -100,3 +100,79 @@ Option **A** is accepted in principle as a **gated M1b spike** (pending maintain
 2. Measure the exact Vite production gzipped JS delta against the `1.5 MB` budget.
 3. Verify in Playwright across **Chromium, Firefox, and WebKit** with `style-src 'self'` active that mounting `EditorView` (with `@codemirror/lang-xml`, `@codemirror/lint`, `@codemirror/search`, and an internal `aria-label` inside the `ShadowRoot`) emits **zero measured `securitypolicyviolation` events**, passes axe accessibility checks, and handles CJK/IME input properly.
 4. **Escalation rule:** If any target browser fails Option A (CSP violation, broken accessibility, or broken IME), **stop and return the fallback decision to the maintainer** — do not automatically adopt Option C.
+
+## Spike Results (2026-11-27)
+
+An isolated spike was built under `spikes/codemirror/` (`index.html`, `main.ts`, `bridge.ts`, `styles.css`, `vite.config.ts`, `codemirror.test.ts`, `playwright.config.ts`, `e2e.spec.ts`), keeping `packages/app/` (`<textarea>`) and `dist/` completely untouched.
+
+### 1. Verification Matrix (Verified vs. `unverified`)
+
+| Check Item                                                                                     | Status           | Evidence / Notes                                                                                                                              |
+| ---------------------------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| License verification (all 17 packages `MIT`, zero non-MIT transitives, `devDependencies` only) | Verified         | `package-lock.json` + `node_modules/*/package.json` + `npm run license:check` (`201` packages)                                                |
+| Vite production bundle size & tree-shaken gzipped delta                                        | Verified         | Measured via `npm run build` vs `vite build --config spikes/codemirror/vite.config.ts` (see table below)                                      |
+| `Option A` CSS / `style-mod` `adoptedStyleSheets` inspection in installed packages             | Verified         | `@codemirror/view@6.44.2`, `@codemirror/lint@6.9.8`, `@codemirror/search@6.7.3` mount inside `this.root` without `setAttribute('style', ...)` |
+| Multi-step Undo/Redo, XML folding, `OpenTag`/`CloseTag` bracketMatching                        | Verified         | `spikes/codemirror/codemirror.test.ts` (`isolateHistory.of('full')`, `foldable`, `matchBrackets`)                                             |
+| `@xmlens/core` `Diagnostic.range.offset` → `@codemirror/lint` (incl. CJK, astral, EOF clamp)   | Verified         | `spikes/codemirror/codemirror.test.ts` (`mapDiagnosticsToLint`, `diagnosticToLintDiagnostic`)                                                 |
+| Undoable `formatXml` transaction (resolving `ADR-0012` `textarea.setRangeText` limitation)     | Verified         | `spikes/codemirror/codemirror.test.ts` (`createFormatTransactionSpec` with `isolateHistory.of('full')`)                                       |
+| `getXPathAtOffset` + composing/stale discard, `decodeXml` LF & `saveXml` CRLF/BOM round-trip   | Verified         | `spikes/codemirror/codemirror.test.ts` (`extractXPathLookupInput`, `shouldDiscardSpikeXPathResult`, `decodeXmlBytes`, `prepareXmlSaveBytes`)  |
+| `EditorView.contentAttributes` (`aria-label`), empty `EditorView.cspNonce`, no `indentWithTab` | Verified         | `spikes/codemirror/codemirror.test.ts` + `spikes/codemirror/bridge.ts`                                                                        |
+| Live browser `securitypolicyviolation` count (`style-src 'self'`) & `adoptedStyleSheets`       | **`unverified`** | Prepared in `spikes/codemirror/e2e.spec.ts`; no browser binaries installed in AI Studio container                                             |
+| Cross-browser Playwright + axe (`wcag22aa`) in Chromium / Firefox / WebKit                     | **`unverified`** | Spec written (`spikes/codemirror/e2e.spec.ts`); execution requires Windows manual check or GitHub Actions `e2e` job                           |
+| Real Japanese IME (`compositionstart`/`update`/`end`), Tab focus exit, screen readers          | **`unverified`** | Requires interactive Windows/macOS browser verification (checklist below)                                                                     |
+
+### 2. Measured Vite Bundle Sizes (`vite@7.3.8`)
+
+| Artifact / Bundle (`npm run build` vs Spike Build)   | Raw Size    | Vite Gzip (`kB`) | `zlib` level-9 Gzip (`B`) | Share of `1.5 MiB` Budget (`1,572,864 B`) |
+| ---------------------------------------------------- | ----------- | ---------------- | ------------------------- | ----------------------------------------- |
+| Production `dist/assets/index-*.css`                 | `8,072` B   | `2.19` kB        | `2,191` B                 | —                                         |
+| Production `dist/assets/index-*.js`                  | `82,315` B  | `24.34` kB       | `24,291` B                | —                                         |
+| Production `dist/assets/xmlWorker-*.js`              | `47,903` B  | —                | `14,010` B                | —                                         |
+| **Production `dist/` Total JS + CSS**                | `138,290` B | —                | **`40,492` B**            | **`~2.57%`**                              |
+| Spike `.spike-dist/codemirror/assets/index-*.css`    | `5,605` B   | `1.77` kB        | `1,766` B                 | —                                         |
+| Spike `.spike-dist/codemirror/assets/index-*.js`     | `463,412` B | `150.87` kB      | `150,525` B               | —                                         |
+| Spike `.spike-dist/codemirror/assets/xmlWorker-*.js` | `47,903` B  | —                | `14,010` B                | —                                         |
+| **Spike Total JS + CSS**                             | `516,920` B | —                | **`166,301` B**           | **`~10.57%`** (`~11.09%` of `1.5 MB`)     |
+
+- **Main-entry JS gzip delta:** `150,525 B - 24,291 B = 126,234 B` (`~123.28 KiB` / `126.53 kB` Vite-reported).
+- **Policy notice (`AGENTS.md` §11):** This gzipped delta **exceeds `100 KB` gzipped** (`> 100 KB`), so maintainer approval is explicitly required before moving CodeMirror 6 into `packages/app` `dependencies` in M1b. At the same time, total JS+CSS (`~166.3 KB` gzipped) leaves roughly `~89.4%` of the `1.5 MiB` first-load budget available for upcoming WASM validators (`libxml2-wasm`), XSLT, and visualizations.
+
+### 3. Compatibility & Integration Findings
+
+- **`@xmlens/core` & `@xmlens/workers`:**
+  - `checkWellFormedness` UTF-16 `Diagnostic.range.offset` maps cleanly to `@codemirror/lint` (`from`, `to` clamped to `[0, doc.length]`), preserving CJK and surrogate-pair coordinates.
+  - `formatXml` output integrates via `createFormatTransactionSpec` (`changes: { from: 0, to: doc.length, insert }` + `annotations: isolateHistory.of('full')`), giving deterministic single-step Undo/Redo and resolving the `ADR-0012` `textarea.setRangeText` browser variance.
+  - `getXPathAtOffset` works via `xpathWorkerClient` with `state.selection.main.head` and `shouldDiscardSpikeXPathResult` checking `view.composing` (`isComposing`), `requestEpoch`, text, and head offset.
+  - `decodeXmlBytes` + `normalizeDecodedTextForEditor` (`LF` normalization, BOM stripping into `hasBom`) round-trips through CodeMirror `state.doc.toString()` back into `prepareXmlSaveBytes` (`CRLF` + BOM restoration).
+- **ShadowRoot & Accessibility:**
+  - Setting `EditorView` `parent: shadowRoot` and `root: shadowRoot` causes `style-mod` to mount Constructable Stylesheets on `shadowRoot.adoptedStyleSheets`. CSS custom properties (`--bg-surface`, `--text-primary`, `--focus-ring`, `--cm-*`) cross the ShadowRoot boundary cleanly in CSS specs for Light, Dark, and High Contrast themes.
+  - Excluding `indentWithTab` from `keymap` preserves `Tab` / `Shift+Tab` focus exit out of the editor. Accessible naming uses `EditorView.contentAttributes.of({ 'aria-label': ... })` inside the ShadowRoot because `aria-labelledby` cannot cross a shadow boundary.
+- **Remaining Concerns & Recommendation:**
+  - Live browser confirmation in Edge/Chrome/Firefox (especially Firefox/WebKit `adoptedStyleSheets` + `style-src 'self'`, search/lint panels inside `ShadowRoot`, and real Japanese IME composition) has not run yet in AI Studio.
+  - **Recommendation:** Proceed to M1b **only after** the maintainer runs the Windows checklist below (or enables the Playwright `e2e` CI job) and confirms zero `securitypolicyviolation` errors, clean axe results, working Japanese IME, and acceptance of the `~126 KB` gzipped bundle increase (`AGENTS.md` §11).
+
+## Windows Edge / Chrome / Firefox Manual Verification Checklist (`spikes/codemirror/`)
+
+Build and preview the isolated spike on Windows (without modifying `packages/app`):
+
+```bash
+npx vite build --config spikes/codemirror/vite.config.ts
+npx vite preview --config spikes/codemirror/vite.config.ts --host 127.0.0.1 --port 3100
+```
+
+### A. Playwright-Automatable Checks (covered by `spikes/codemirror/e2e.spec.ts` when browsers are available)
+
+1. Open `http://127.0.0.1:3100/` in **Edge / Chrome** and **Firefox** (`vite preview`, strict `style-src 'self'`).
+2. Click **Load sample** (`#spike-sample`), confirm `#spike-status-state` shows `Well-formed`, `#spike-status-csp` shows `CSP violations: 0`, and DevTools Console shows zero CSP errors or exceptions.
+3. Inspect `#cm-host.shadowRoot` in DevTools Console: confirm `shadowRoot.querySelectorAll('style').length === 0`, `shadowRoot.adoptedStyleSheets.length > 0`, and `.cm-content` has `aria-label="XML Input"` (or `"XML 入力"` in `ja`).
+4. Click **Format** (`#spike-format`), **Undo** (`#spike-undo`), **Redo** (`#spike-redo`), verify formatting and undo/redo succeed with `CSP violations: 0`.
+5. Click **Verify Save Round-Trip** (`#spike-verify-save`) and confirm `Save check OK`; test opening a malformed XML file and clicking a diagnostic button to verify cursor jump and `@codemirror/lint` inline underline.
+6. Run axe DevTools (`wcag22aa`) in browser or `npx playwright test --config spikes/codemirror/playwright.config.ts` on a machine/CI runner with browsers installed.
+
+### B. Manual-Only Checks (Cannot Be Reliably Automated With Synthetic Events Alone)
+
+1. **Real Japanese IME composition & cancellation:** Focus the editor, enable Microsoft IME (Japanese), type `あいう` + convert + commit inside `<root><p></p></root>`, and cancel a conversion with `Escape`. Confirm no duplicated characters, status-bar `XPath` updates cleanly after commit without flickering mid-composition, and `CSP violations: 0`.
+2. **Keyboard-only `Tab` exit & Search panel (`Ctrl+F`):** Focus the editor, press `Tab` and `Shift+Tab`, and confirm focus exits the editor cleanly (no keyboard trap). Press `Ctrl+F` (or click **Search**), navigate search panel inputs/buttons with `Tab`, and press `Escape` to return focus to the editor while confirming `CSP violations: 0`.
+3. **Screen reader announcement (Windows Narrator or NVDA):** Focus the editor and confirm the screen reader announces `XML Input` / `XML 入力` and editable role; navigate to a diagnostic item and confirm location/message readout.
+4. **Themes & High Contrast / `prefers-reduced-motion`:** Switch **Light / Dark / High contrast** in the spike toolbar, inspect syntax colors, selection background, gutter, and `2px` focus ring readability; verify cursor blinking stops when Windows animation effects are reduced.
+5. **Dev server nonce check (`ADR-0007` comparison):** Optionally run `npx vite --config spikes/codemirror/vite.config.ts --host 127.0.0.1 --port 3100`, edit CSS/TS to verify Vite `html.cspNonce` (`style-src 'self' 'nonce-...'`) + HMR works with zero CSP console errors, then return to `vite preview` for strict CSP sign-off.

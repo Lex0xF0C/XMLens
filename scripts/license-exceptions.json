@@ -12,5 +12,19 @@
     "license": "BlueOak-1.0.0",
     "reason": "permissive license, dev-only transitive dependency of eslint/typescript-eslint",
     "reviewed-by": "maintainer"
+  },
+  {
+    "name": "@axe-core/playwright",
+    "versionRange": "~4.14.1",
+    "license": "MPL-2.0",
+    "reason": "maintainer-approved devDependency only (Playwright E2E a11y runner, unmodified, never bundled into dist/ or Pages)",
+    "reviewed-by": "maintainer"
+  },
+  {
+    "name": "axe-core",
+    "versionRange": "~4.14.1",
+    "license": "MPL-2.0",
+    "reason": "maintainer-approved devDependency only (Playwright E2E a11y engine, unmodified, never bundled into dist/ or Pages)",
+    "reviewed-by": "maintainer"
   }
 ]

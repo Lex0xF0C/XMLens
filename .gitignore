@@ -4,3 +4,6 @@ plugins/saxonjs/*.js
 **/SaxonJS*
 **/saxon-js*
 .DS_Store
+playwright-report/
+test-results/
+.spike-dist/

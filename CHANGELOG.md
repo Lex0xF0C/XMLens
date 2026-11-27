@@ -7,6 +7,27 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0006] - 2026-11-27
+
+- **Sync:** direct
+- **Refs:** ADR-0001, ADR-0005, ADR-0006, ADR-0007, package.json, package-lock.json, scripts/license-exceptions.json, .gitignore, eslint.config.mjs, tsconfig.json, vitest.config.ts, vite.config.ts, scripts/csp-build.test.mjs, spikes/codemirror/vite.config.ts, spikes/codemirror/index.html, spikes/codemirror/styles.css, spikes/codemirror/bridge.ts, spikes/codemirror/main.ts, spikes/codemirror/codemirror.test.ts, spikes/codemirror/playwright.config.ts, spikes/codemirror/e2e.spec.ts, docs/adr/0006-e2e-and-a11y-tooling.md, docs/adr/0007-dev-server-csp-and-styles.md, docs/adr/0005-codemirror-and-csp.md, docs/adr/0001-technology-stack.md, docs/feature-matrix.md, CHANGELOG.md
+
+### Added
+
+- Installed `@playwright/test@1.65.1` (`Apache-2.0`), `@axe-core/playwright@4.14.1` (`MPL-2.0`), `axe-core@4.14.1` (`MPL-2.0`), and the 7 MIT-licensed CodeMirror 6 spike packages (`@codemirror/state@6.7.6`, `@codemirror/view@6.44.2`, `@codemirror/commands@6.11.2`, `@codemirror/language@6.13.1`, `@codemirror/lang-xml@6.1.0`, `@codemirror/lint@6.9.8`, `@codemirror/search@6.7.3` plus 10 MIT transitives) strictly as root `devDependencies` (`dev: true` in `package-lock.json`, zero runtime dependencies added).
+- Added Node/Vitest CSP build invariance regression suite `scripts/csp-build.test.mjs` verifying `packages/app/index.html` and programmatic `vite build` output retain the exact strict production CSP without `'unsafe-inline'`, `'unsafe-eval'`, `nonce-`, `csp-nonce`, `ws:`, or `wss:`, and verifying `serve`-mode nonce + `ws:`/`wss:` configuration.
+- Created isolated CodeMirror 6 `Option A` (`ShadowRoot` + `adoptedStyleSheets`, zero `EditorView.cspNonce`, zero `indentWithTab`) spike under `spikes/codemirror/` (`vite.config.ts`, `index.html`, `styles.css`, `bridge.ts`, `main.ts`, `codemirror.test.ts`, `playwright.config.ts`, `e2e.spec.ts`), integrating `@xmlens/core` `Diagnostic` → `@codemirror/lint`, `xpathWorkerClient` (`shouldDiscardSpikeXPathResult` with `isComposing`), undoable `formatXml` transactions (`isolateHistory.of('full')`), `decodeXml`/`saveXml` LF/CRLF/BOM round-trip, `securitypolicyviolation` tracking, 3 themes, and `en`/`ja` `aria-label` switching without modifying `packages/app` `<textarea>` or `dist/`.
+
+### Changed
+
+- Updated `vite.config.ts` (`createXmlensViteConfig`, `createDevCspPlugin`, `buildServeCsp`, `applyServeCspToHtml`) to implement `ADR-0007` Option (b) (`html.cspNonce` + `connect-src 'self' ws: wss:` with per-process Web Crypto nonce) strictly when `command === 'serve'`, leaving `command === 'build'` and `packages/app/index.html` untouched.
+- Updated `docs/adr/0006-e2e-and-a11y-tooling.md` to conditional `Accepted` (recording exact installed versions, `MPL-2.0` dev-only exception scope, `THIRD_PARTY_NOTICES.md` exclusion, `.gitignore` rules, and deferred CI job review notes without editing `.github/workflows/ci.yml`), `docs/adr/0007-dev-server-csp-and-styles.md` to `Accepted` with constraints and candidate `(a)`/`(b)`/`(c)` comparison, `docs/adr/0005-codemirror-and-csp.md` with Spike Results (verified vs. `unverified` matrix, `~126.2–126.5 kB` gzipped JS delta notice under `AGENTS.md` §11, and Windows manual verification checklist while keeping `<textarea>` replacement unapproved), `docs/adr/0001-technology-stack.md` (`Testing & Quality` and `Code Editor` rows), and `docs/feature-matrix.md`.
+- Updated `.gitignore` (`playwright-report/`, `test-results/`, `.spike-dist/`), `eslint.config.mjs`, `tsconfig.json`, and `vitest.config.ts` for spike isolation and ignored test artifacts.
+
+### Security
+
+- Added reviewed `devDependencies`-only `MPL-2.0` exceptions strictly for `@axe-core/playwright` (`~4.14.1`) and `axe-core` (`~4.14.1`) in `scripts/license-exceptions.json` (`reviewed-by: "maintainer"`), verified via `npm run license:check` and `npm run notices:check`.
+
 ## [DEV-0005] - 2026-11-27
 
 - **Sync:** direct
