@@ -7,6 +7,25 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0011] - 2026-11-28
+
+- **Sync:** direct
+- **Refs:** ADR-0009, ADR-0016, docs/legal/guard-verification.md, spikes/r1-uri/tsconfig.json, spikes/r1-uri/uri.ts, spikes/r1-uri/uri.test.ts, package.json, docs/adr/0016-uri-resolution-spike-r1.md, docs/feature-matrix.md, CHANGELOG.md
+
+### Added
+
+- Implemented Spike R1 (RFC 3986 portion) under `spikes/r1-uri/` (`uri.ts`, `uri.test.ts`, `tsconfig.json` with `"lib": ["ES2022"]`): pure TypeScript DOM-free `parseUri` (RFC 3986 §3 / Appendix B, distinguishing `undefined` vs `""`), `removeDotSegments` (§5.2.4), `mergePaths` (§5.2.3), `recomposeUri` (§5.3), and `resolveReference` (§5.2.2 strict mode), verified against all 23 Normal (§5.4.1) and 19 Abnormal (§5.4.2) test vectors retrieved from `rfc-editor.org/rfc/rfc3986.txt` plus `untitled:1`, authority-less bases, deep `../`, and percent-encoded/unencoded Japanese IRI edge cases.
+- Drafted `docs/adr/0016-uri-resolution-spike-r1.md` (`Status: Proposed`) documenting verified vectors, unimplemented §6.2.2 normalization, pending OASIS XML Catalogs R1 work (`ADR-0009` Unverified Item #3 unchanged), and open M3 decisions (IRI encoding, `untitled:N` relative-path policy).
+
+### Changed
+
+- Added `tsc -p spikes/r1-uri/tsconfig.json --noEmit` to the root `typecheck` script in `package.json` to enforce DOM-free `ES2022` compilation for `spikes/r1-uri/`.
+- Updated `docs/feature-matrix.md` §7 `Resource Resolver` Notes to reference the `spikes/r1-uri/` Spike R1 verification (`ADR-0016` Proposed) while keeping status `Not started`.
+
+### Fixed
+
+- Corrected `docs/legal/guard-verification.md` Verification Record (`DEV-0010`) so it accurately states that within the `npm run check` chain on throwaway-branch run `45975155206`, steps up through `test` (maintainer-reported 17 Vitest files / 135 tests) passed while `plugins:guard` failed as intended, causing the `check` job itself to fail as expected.
+
 ## [DEV-0010] - 2026-11-28
 
 - **Sync:** direct

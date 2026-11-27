@@ -80,4 +80,4 @@ Therefore, the Milestone M0 acceptance test ("confirm that the repository guard 
   Disallowed Saxon-related file path: saxon-test.js
   Error: Process completed with exit code 1.
   ```
-- **Result / 結果:** Pass (`合格`) — Repository guard caught `saxon-test.js` and exited with code `1` as designed, completing the Milestone M0 repository guard acceptance test. (On the same run, the `check` job passed all 17 Vitest test files / 135 tests; `e2e-spike` results are tracked separately and remain awaiting verification.)
+- **Result / 結果:** Pass (`合格`) — Repository guard caught `saxon-test.js` and exited with code `1` as designed, completing the Milestone M0 repository guard acceptance test. (Within the `npm run check` chain on that throwaway-branch run, steps up through `test` — reported by the maintainer as 17 Vitest test files / 135 tests — passed before `plugins:guard` failed as intended, so the `check` job itself failed as expected; `e2e-spike` results are tracked separately and remain awaiting verification.)
