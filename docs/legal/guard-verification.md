@@ -66,3 +66,18 @@ Therefore, the Milestone M0 acceptance test ("confirm that the repository guard 
    # If pushed to remote:
    git push origin --delete test/verify-guard
    ```
+
+## Verification Record / 検証記録
+
+- **Date / 実施日:** 2026-11-28
+- **Executor / 実施者:** Maintainer (`メンテナ`)
+- **Environment / 実施場所:** Throwaway branch in an isolated local clone disconnected from Google AI Studio (branch deleted by maintainer after verification)
+- **CI Run URL:** <https://github.com/Lex0xF0C/XMLens/actions/runs/45975155206>
+- **Observed CI Log (`plugins:guard`):**
+  ```text
+  > xmlens@0.1.0 plugins:guard
+  > node scripts/check-no-third-party-binaries.mjs
+  Disallowed Saxon-related file path: saxon-test.js
+  Error: Process completed with exit code 1.
+  ```
+- **Result / 結果:** Pass (`合格`) — Repository guard caught `saxon-test.js` and exited with code `1` as designed, completing the Milestone M0 repository guard acceptance test. (On the same run, the `check` job passed all 17 Vitest test files / 135 tests; `e2e-spike` results are tracked separately and remain awaiting verification.)

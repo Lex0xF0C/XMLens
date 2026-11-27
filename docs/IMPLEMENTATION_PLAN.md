@@ -301,7 +301,7 @@ Each milestone ends with a tagged release deployed to GitHub Pages and an update
 - Repo scaffolding, MIT license, `AGENTS.md`, ADR-0001 (stack), CI (lint, typecheck, test, license check), Pages deploy workflow with sub-path support.
 - i18n skeleton with `en`/`ja`, language switcher, key-parity check.
 - App shell: layout, theme (light/dark/high-contrast), CSP.
-- **Acceptance:** blank app deploys to Pages in both languages; CI green; license check enforced; the repository guard is active and has been verified to catch a deliberately added `saxon-test.js` on a throwaway branch.
+- **Acceptance:** blank app deploys to Pages in both languages; CI green; license check enforced; the repository guard is active and has been verified to catch a deliberately added `saxon-test.js` on a throwaway branch (verified 2026-11-28 by maintainer, CI run `45975155206`, `docs/legal/guard-verification.md`).
 
 ### M1 — Editor core (≈2–3 weeks)
 - Open/save/drag-drop, tabs (with stable document URI identities such as `untitled:1`), UTF-8/16 + BOM, CodeMirror setup, folding, tag matching, snippets (basic).

@@ -7,6 +7,17 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0010] - 2026-11-28
+
+- **Sync:** direct
+- **Refs:** README.md, README.ja.md, docs/feature-matrix.md, docs/legal/guard-verification.md, docs/IMPLEMENTATION_PLAN.md, CHANGELOG.md
+
+### Changed
+
+- Updated `README.md` and `README.ja.md` status lines to mark Milestone M0 completed following the maintainer's manual throwaway-branch repository guard verification while keeping M1 in progress.
+- Updated `docs/feature-matrix.md` §1 (`CI checks ... & Pages workflow`) from `Pending manual check (M0)` to `Implemented (M0)` with the 2026-11-28 verification summary (`Disallowed Saxon-related file path: saxon-test.js`, exit code `1`, CI run `45975155206`) and removed the now-unused `Pending manual check (M0)` status legend entry.
+- Appended the 2026-11-28 `Verification Record / 検証記録` section (observed `plugins:guard` CI log and run URL `45975155206`, preserving the re-execution procedure) to `docs/legal/guard-verification.md`, and recorded the verification date/run reference in `docs/IMPLEMENTATION_PLAN.md` §8 M0 Acceptance (`e2e-spike` remains awaiting verification).
+
 ## [DEV-0009] - 2026-11-27
 
 - **Sync:** direct
