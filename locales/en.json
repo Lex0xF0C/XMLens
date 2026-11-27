@@ -52,6 +52,8 @@
   "statusBar.encoding": "Encoding: {value}",
   "statusBar.encodingNone": "—",
   "statusBar.encodingWithBom": "{encoding} (BOM)",
+  "statusBar.xpath": "XPath: {value}",
+  "statusBar.xpathNone": "—",
   "statusBar.language": "Lang: EN",
   "statusBar.localOnly": "100% local · No uploads · No telemetry",
   "about.title": "About XMLens",

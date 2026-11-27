@@ -1,10 +1,18 @@
-import type { FormatXmlResult, WellFormednessOptions, WellFormednessResult } from '@xmlens/core';
+import type {
+  FormatXmlResult,
+  WellFormednessOptions,
+  WellFormednessResult,
+  XPathAtOffsetResult,
+} from '@xmlens/core';
 import {
   isWorkerResponse,
   WORKER_PROTOCOL_VERSION,
   type CheckWellFormednessRequest,
   type FormatXmlRequest,
   type FormatXmlWorkerOptions,
+  type GetXPathAtOffsetRequest,
+  type WorkerRequest,
+  type WorkerSuccessResponse,
 } from './protocol';
 
 export interface WorkerMessageEventLike {
@@ -38,11 +46,25 @@ export type WorkerFormatCallResult =
   | { readonly status: 'timeout' }
   | { readonly status: 'error'; readonly message: string };
 
+export type WorkerXPathCallResult =
+  | { readonly status: 'ok'; readonly result: XPathAtOffsetResult }
+  | { readonly status: 'cancelled' }
+  | { readonly status: 'timeout' }
+  | { readonly status: 'error'; readonly message: string };
+
 export interface WorkerFormatCallOptions {
   readonly timeoutMs?: number;
 }
 
+export interface WorkerXPathCallOptions {
+  readonly timeoutMs?: number;
+}
+
 export interface WellFormednessWorkerClientOptions {
+  readonly timeoutMs?: number;
+}
+
+export interface XPathWorkerClientOptions {
   readonly timeoutMs?: number;
 }
 
@@ -57,36 +79,57 @@ export interface WellFormednessWorkerClient {
   dispose(): void;
 }
 
+export interface XPathWorkerClient {
+  getXPathAtOffset(
+    xml: string,
+    offset: number,
+    callOptions?: WorkerXPathCallOptions,
+  ): Promise<WorkerXPathCallResult>;
+  cancel(): void;
+  dispose(): void;
+}
+
 const DEFAULT_TIMEOUT_MS = 5000;
 export const DEFAULT_FORMAT_TIMEOUT_MS = 15_000;
 
-/**
- * Creates a main-thread RPC client for well-formedness checks and XML formatting with request-id
- * matching, cancellation (terminating and respawning the worker), and timeout enforcement.
- */
-export function createWellFormednessWorkerClient(
+interface WorkerResultByType {
+  readonly checkWellFormedness: WellFormednessResult;
+  readonly formatXml: FormatXmlResult;
+  readonly getXPathAtOffset: XPathAtOffsetResult;
+}
+
+type RpcOutcome<TResult> =
+  | { readonly status: 'ok'; readonly result: TResult }
+  | { readonly status: 'cancelled' }
+  | { readonly status: 'timeout' }
+  | { readonly status: 'error'; readonly message: string };
+
+interface SingleFlightRpcRunner {
+  send<TKind extends keyof WorkerResultByType>(
+    expectedType: TKind,
+    buildRequest: (id: number) => Extract<WorkerRequest, { type: TKind }>,
+    overrideTimeoutMs?: number,
+  ): Promise<RpcOutcome<WorkerResultByType[TKind]>>;
+  cancel(): void;
+  dispose(): void;
+}
+
+function createSingleFlightRpcRunner(
   spawnWorker: () => WorkerLike,
-  clientOptions?: WellFormednessWorkerClientOptions,
-): WellFormednessWorkerClient {
-  const timeoutMs = Math.max(1, clientOptions?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  defaultTimeoutMs: number,
+): SingleFlightRpcRunner {
+  const baseTimeoutMs = Math.max(1, defaultTimeoutMs);
 
   let worker: WorkerLike | null = null;
   let nextRequestId = 1;
   let disposed = false;
 
-  type PendingRequest =
-    | {
-        readonly kind: 'checkWellFormedness';
-        readonly id: number;
-        readonly timer: ReturnType<typeof setTimeout>;
-        readonly resolve: (value: WorkerCallResult) => void;
-      }
-    | {
-        readonly kind: 'formatXml';
-        readonly id: number;
-        readonly timer: ReturnType<typeof setTimeout>;
-        readonly resolve: (value: WorkerFormatCallResult) => void;
-      };
+  interface PendingRequest {
+    readonly expectedType: WorkerSuccessResponse['type'];
+    readonly id: number;
+    readonly timer: ReturnType<typeof setTimeout>;
+    readonly resolve: (value: RpcOutcome<WorkerSuccessResponse['result']>) => void;
+  }
 
   let pending: PendingRequest | null = null;
 
@@ -131,13 +174,7 @@ export function createWellFormednessWorkerClient(
     }
 
     const current = pending;
-    if (current.kind === 'checkWellFormedness' && event.data.type === 'checkWellFormedness') {
-      pending = null;
-      clearTimeout(current.timer);
-      current.resolve({ status: 'ok', result: event.data.result });
-      return;
-    }
-    if (current.kind === 'formatXml' && event.data.type === 'formatXml') {
+    if (event.data.type === current.expectedType) {
       pending = null;
       clearTimeout(current.timer);
       current.resolve({ status: 'ok', result: event.data.result });
@@ -196,97 +233,54 @@ export function createWellFormednessWorkerClient(
     active.resolve({ status: 'cancelled' });
   };
 
+  const sendRequest = <TKind extends keyof WorkerResultByType>(
+    expectedType: TKind,
+    buildRequest: (id: number) => Extract<WorkerRequest, { type: TKind }>,
+    overrideTimeoutMs?: number,
+  ): Promise<RpcOutcome<WorkerResultByType[TKind]>> => {
+    if (disposed) {
+      return Promise.resolve({ status: 'cancelled' });
+    }
+
+    if (pending) {
+      cancelActiveRequest();
+    }
+
+    const id = nextRequestId++;
+    const effectiveTimeoutMs = Math.max(1, overrideTimeoutMs ?? baseTimeoutMs);
+    const request = buildRequest(id);
+
+    return new Promise<RpcOutcome<WorkerResultByType[TKind]>>((resolve) => {
+      const timer = setTimeout(() => {
+        if (!pending || pending.id !== id) {
+          return;
+        }
+        detachAndTerminateWorker();
+        settlePendingFailure(id, { status: 'timeout' });
+      }, effectiveTimeoutMs);
+
+      pending = {
+        expectedType,
+        id,
+        timer,
+        resolve: resolve as (value: RpcOutcome<WorkerSuccessResponse['result']>) => void,
+      };
+
+      try {
+        const activeWorker = ensureWorker();
+        activeWorker.postMessage(request);
+      } catch (err: unknown) {
+        detachAndTerminateWorker();
+        settlePendingFailure(id, {
+          status: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+  };
+
   return {
-    check(xml: string, options?: WellFormednessOptions): Promise<WorkerCallResult> {
-      if (disposed) {
-        return Promise.resolve({ status: 'cancelled' });
-      }
-
-      if (pending) {
-        cancelActiveRequest();
-      }
-
-      const id = nextRequestId++;
-      const payload: { readonly xml: string; readonly options?: WellFormednessOptions } =
-        options !== undefined ? { xml, options } : { xml };
-      const request: CheckWellFormednessRequest = {
-        protocolVersion: WORKER_PROTOCOL_VERSION,
-        id,
-        type: 'checkWellFormedness',
-        payload,
-      };
-
-      return new Promise<WorkerCallResult>((resolve) => {
-        const timer = setTimeout(() => {
-          if (!pending || pending.id !== id) {
-            return;
-          }
-          detachAndTerminateWorker();
-          settlePendingFailure(id, { status: 'timeout' });
-        }, timeoutMs);
-
-        pending = { kind: 'checkWellFormedness', id, timer, resolve };
-
-        try {
-          const activeWorker = ensureWorker();
-          activeWorker.postMessage(request);
-        } catch (err: unknown) {
-          detachAndTerminateWorker();
-          settlePendingFailure(id, {
-            status: 'error',
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }
-      });
-    },
-
-    format(
-      text: string,
-      options?: FormatXmlWorkerOptions,
-      callOptions?: WorkerFormatCallOptions,
-    ): Promise<WorkerFormatCallResult> {
-      if (disposed) {
-        return Promise.resolve({ status: 'cancelled' });
-      }
-
-      if (pending) {
-        cancelActiveRequest();
-      }
-
-      const id = nextRequestId++;
-      const effectiveTimeoutMs = Math.max(1, callOptions?.timeoutMs ?? DEFAULT_FORMAT_TIMEOUT_MS);
-      const payload: { readonly text: string; readonly options?: FormatXmlWorkerOptions } =
-        options !== undefined ? { text, options } : { text };
-      const request: FormatXmlRequest = {
-        protocolVersion: WORKER_PROTOCOL_VERSION,
-        id,
-        type: 'formatXml',
-        payload,
-      };
-
-      return new Promise<WorkerFormatCallResult>((resolve) => {
-        const timer = setTimeout(() => {
-          if (!pending || pending.id !== id) {
-            return;
-          }
-          detachAndTerminateWorker();
-          settlePendingFailure(id, { status: 'timeout' });
-        }, effectiveTimeoutMs);
-
-        pending = { kind: 'formatXml', id, timer, resolve };
-
-        try {
-          const activeWorker = ensureWorker();
-          activeWorker.postMessage(request);
-        } catch (err: unknown) {
-          detachAndTerminateWorker();
-          settlePendingFailure(id, {
-            status: 'error',
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }
-      });
-    },
+    send: sendRequest,
 
     cancel(): void {
       cancelActiveRequest();
@@ -296,6 +290,101 @@ export function createWellFormednessWorkerClient(
       disposed = true;
       cancelActiveRequest();
       detachAndTerminateWorker();
+    },
+  };
+}
+
+/**
+ * Creates a main-thread RPC client for well-formedness checks and XML formatting with request-id
+ * matching, cancellation (terminating and respawning the worker), and timeout enforcement.
+ */
+export function createWellFormednessWorkerClient(
+  spawnWorker: () => WorkerLike,
+  clientOptions?: WellFormednessWorkerClientOptions,
+): WellFormednessWorkerClient {
+  const runner = createSingleFlightRpcRunner(
+    spawnWorker,
+    clientOptions?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+
+  return {
+    check(xml: string, options?: WellFormednessOptions): Promise<WorkerCallResult> {
+      const payload: { readonly xml: string; readonly options?: WellFormednessOptions } =
+        options !== undefined ? { xml, options } : { xml };
+      return runner.send('checkWellFormedness', (id): CheckWellFormednessRequest => ({
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id,
+        type: 'checkWellFormedness',
+        payload,
+      }));
+    },
+
+    format(
+      text: string,
+      options?: FormatXmlWorkerOptions,
+      callOptions?: WorkerFormatCallOptions,
+    ): Promise<WorkerFormatCallResult> {
+      const payload: { readonly text: string; readonly options?: FormatXmlWorkerOptions } =
+        options !== undefined ? { text, options } : { text };
+      return runner.send(
+        'formatXml',
+        (id): FormatXmlRequest => ({
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          id,
+          type: 'formatXml',
+          payload,
+        }),
+        callOptions?.timeoutMs ?? DEFAULT_FORMAT_TIMEOUT_MS,
+      );
+    },
+
+    cancel(): void {
+      runner.cancel();
+    },
+
+    dispose(): void {
+      runner.dispose();
+    },
+  };
+}
+
+/**
+ * Creates a dedicated RPC client for cursor XPath lookups so frequent cursor movement
+ * cancels only stale XPath lookups without interrupting in-flight well-formedness or format jobs.
+ */
+export function createXPathWorkerClient(
+  spawnWorker: () => WorkerLike,
+  clientOptions?: XPathWorkerClientOptions,
+): XPathWorkerClient {
+  const runner = createSingleFlightRpcRunner(
+    spawnWorker,
+    clientOptions?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+
+  return {
+    getXPathAtOffset(
+      xml: string,
+      offset: number,
+      callOptions?: WorkerXPathCallOptions,
+    ): Promise<WorkerXPathCallResult> {
+      return runner.send(
+        'getXPathAtOffset',
+        (id): GetXPathAtOffsetRequest => ({
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+          id,
+          type: 'getXPathAtOffset',
+          payload: { xml, offset },
+        }),
+        callOptions?.timeoutMs,
+      );
+    },
+
+    cancel(): void {
+      runner.cancel();
+    },
+
+    dispose(): void {
+      runner.dispose();
     },
   };
 }

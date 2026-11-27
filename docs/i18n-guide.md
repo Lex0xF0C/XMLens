@@ -44,6 +44,7 @@ Terms marked **Undecided (未決)** are awaiting final maintainer approval. Do n
 | BOM                   | BOM（バイトオーダーマーク）       | **Undecided (未決)** | Unicode Byte Order Mark option in Save dialog; provisional translation pending review (`needs-ja-review`).                                                                                       |
 | Format                | 整形                              | **Undecided (未決)** | XML pretty-print toolbar action (`ADR-0012`); kept as 「整形」 for now while remaining Undecided (alternative candidate: 「フォーマット」) due to visual similarity to 「整形式」 (Well-formed). |
 | Indent                | インデント                        | **Undecided (未決)** | Indentation style selector (`2 spaces` / `4 spaces` / `Tab`); provisional translation (`needs-ja-review`).                                                                                       |
+| Breadcrumb            | パンくず / パンくずリスト         | **Undecided (未決)** | Proposed terminology for the cursor element path (`statusBar.xpath` displays `XPath: {value}` directly without surfacing a Japanese translation yet).                                            |
 
 Notes on UI terminology & units:
 

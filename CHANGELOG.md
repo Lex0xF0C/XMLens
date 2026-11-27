@@ -7,6 +7,19 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0005] - 2026-11-27
+
+- **Sync:** direct
+- **Refs:** ADR-0014, packages/core/src/xmlTokenizer.ts, packages/core/src/formatter.ts, packages/core/src/xpathAtOffset.ts, packages/core/src/xpathAtOffset.test.ts, packages/core/src/index.ts, packages/workers/src/protocol.ts, packages/workers/src/handler.ts, packages/workers/src/client.ts, packages/workers/src/index.ts, packages/workers/src/workers.test.ts, packages/app/src/xpathCursor.ts, packages/app/src/xpathCursor.test.ts, packages/app/src/main.ts, packages/app/src/styles.css, locales/en.json, locales/ja.json, docs/i18n-guide.md, docs/adr/0014-xpath-at-cursor.md, docs/feature-matrix.md, CHANGELOG.md
+
+### Added
+
+- Implemented pure TypeScript, DOM-free `getXPathAtOffset(xml, offset)` in `@xmlens/core` (`packages/core/src/xpathAtOffset.ts`, exported via `packages/core/src/index.ts`) gated on `checkWellFormedness`, using an iterative explicit stack, quote-aware `xmlns`/`xmlns:*` namespace resolution, expanded-name sibling indexing, strict interior `(start, end)` tag-boundary containment, XPath 3.1 `Q{uri}local[n]` canonical paths, and `qname` display breadcrumbs, with Vitest coverage in `packages/core/src/xpathAtOffset.test.ts`.
+- Extracted the lossless XML tokenizer from `packages/core/src/formatter.ts` into internal module `packages/core/src/xmlTokenizer.ts` so formatting and cursor XPath offset tracking share identical UTF-16 token boundaries.
+- Added `'getXPathAtOffset'` RPC support (`protocol.ts`, `handler.ts`) and an independent `createXPathWorkerClient` (`client.ts`, exported via `packages/workers/src/index.ts`) with strict payload validation and Vitest tests (`packages/workers/src/workers.test.ts`) so cursor lookups never cancel in-flight well-formedness or formatting requests.
+- Added 150 ms debounced cursor XPath breadcrumb lookup (`keyup`, `mouseup`, `input`, `focus`, `select`, plus diagnostic jump / format updates) and status-bar display (`#status-xpath` without `aria-live`, full-path `title`, ellipsis truncation, and `—` fallback) in `packages/app/src/main.ts`, `packages/app/src/styles.css`, and `packages/app/src/xpathCursor.ts` (`xpathCursor.test.ts`), along with `statusBar.xpath` / `statusBar.xpathNone` keys in `locales/en.json` and `locales/ja.json`.
+- Created `docs/adr/0014-xpath-at-cursor.md` (`Status: Proposed`), added the `Breadcrumb` (`Undecided`) proposal to `docs/i18n-guide.md`, and updated `docs/feature-matrix.md`.
+
 ## [DEV-0004] - 2026-11-27
 
 - **Sync:** direct

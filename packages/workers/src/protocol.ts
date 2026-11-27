@@ -3,6 +3,7 @@ import type {
   IndentStyle,
   WellFormednessOptions,
   WellFormednessResult,
+  XPathAtOffsetResult,
 } from '@xmlens/core';
 
 export const WORKER_PROTOCOL_VERSION = 1 as const;
@@ -33,7 +34,17 @@ export interface FormatXmlRequest {
   };
 }
 
-export type WorkerRequest = CheckWellFormednessRequest | FormatXmlRequest;
+export interface GetXPathAtOffsetRequest {
+  readonly protocolVersion: typeof WORKER_PROTOCOL_VERSION;
+  readonly id: number;
+  readonly type: 'getXPathAtOffset';
+  readonly payload: {
+    readonly xml: string;
+    readonly offset: number;
+  };
+}
+
+export type WorkerRequest = CheckWellFormednessRequest | FormatXmlRequest | GetXPathAtOffsetRequest;
 
 export type WorkerErrorCode = 'INVALID_REQUEST' | 'UNSUPPORTED_PROTOCOL' | 'INTERNAL_ERROR';
 
@@ -53,7 +64,16 @@ export interface FormatXmlSuccessResponse {
   readonly result: FormatXmlResult;
 }
 
-export type WorkerSuccessResponse = CheckWellFormednessSuccessResponse | FormatXmlSuccessResponse;
+export interface GetXPathAtOffsetSuccessResponse {
+  readonly protocolVersion: typeof WORKER_PROTOCOL_VERSION;
+  readonly id: number;
+  readonly ok: true;
+  readonly type: 'getXPathAtOffset';
+  readonly result: XPathAtOffsetResult;
+}
+
+export type WorkerSuccessResponse =
+  CheckWellFormednessSuccessResponse | FormatXmlSuccessResponse | GetXPathAtOffsetSuccessResponse;
 
 export interface WorkerErrorResponse {
   readonly protocolVersion: typeof WORKER_PROTOCOL_VERSION;
@@ -82,7 +102,7 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
     if (value.type === 'checkWellFormedness') {
       return isRecord(value.result);
     }
-    if (value.type === 'formatXml') {
+    if (value.type === 'formatXml' || value.type === 'getXPathAtOffset') {
       return isRecord(value.result) && typeof value.result.ok === 'boolean';
     }
     return false;

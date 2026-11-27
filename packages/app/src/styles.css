@@ -402,10 +402,21 @@ textarea {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .status-field {
   white-space: nowrap;
+}
+
+.status-xpath {
+  min-width: 0;
+  max-width: min(46vw, 480px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .about-dialog {

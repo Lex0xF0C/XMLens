@@ -1,5 +1,6 @@
 export {
   createWellFormednessWorkerClient,
+  createXPathWorkerClient,
   DEFAULT_FORMAT_TIMEOUT_MS,
   type WellFormednessWorkerClient,
   type WellFormednessWorkerClientOptions,
@@ -9,6 +10,10 @@ export {
   type WorkerFormatCallResult,
   type WorkerLike,
   type WorkerMessageEventLike,
+  type WorkerXPathCallOptions,
+  type WorkerXPathCallResult,
+  type XPathWorkerClient,
+  type XPathWorkerClientOptions,
 } from './client';
 export { handleWorkerRequest } from './handler';
 export {
@@ -19,6 +24,8 @@ export {
   type FormatXmlRequest,
   type FormatXmlSuccessResponse,
   type FormatXmlWorkerOptions,
+  type GetXPathAtOffsetRequest,
+  type GetXPathAtOffsetSuccessResponse,
   type WorkerErrorCode,
   type WorkerErrorResponse,
   type WorkerRequest,

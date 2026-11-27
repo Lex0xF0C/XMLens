@@ -9,7 +9,7 @@ import {
   type MessageCatalog,
   type WellFormednessResult,
 } from '@xmlens/core';
-import { createWellFormednessWorkerClient } from '@xmlens/workers';
+import { createWellFormednessWorkerClient, createXPathWorkerClient } from '@xmlens/workers';
 import enCatalog from '../../../locales/en.json';
 import jaCatalog from '../../../locales/ja.json';
 import {
@@ -36,6 +36,12 @@ import {
   SAVE_ENCODING_OPTIONS,
   triggerBlobDownload,
 } from './saveXml';
+import {
+  shouldDiscardAsyncXPathResult,
+  XPATH_DEBOUNCE_MS,
+  xpathStatusFromWorkerOutcome,
+  type XPathStatusState,
+} from './xpathCursor';
 import './styles.css';
 
 type ThemeMode = 'light' | 'dark' | 'high-contrast';
@@ -170,15 +176,19 @@ function mountApp(): void {
   let lastPreDiagnostics: readonly Diagnostic[] = [];
   let xmlDraft = '';
   let validationStatus: ValidationStatus = { kind: 'empty' };
+  let xpathStatus: XPathStatusState = { kind: 'none' };
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let xpathDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let checkEpoch = 0;
+  let xpathEpoch = 0;
 
-  const workerClient = createWellFormednessWorkerClient(
-    () =>
-      new Worker(new URL('../../workers/src/xmlWorker.ts', import.meta.url), { type: 'module' }),
-  );
+  const spawnXmlWorker = (): Worker =>
+    new Worker(new URL('../../workers/src/xmlWorker.ts', import.meta.url), { type: 'module' });
+  const workerClient = createWellFormednessWorkerClient(spawnXmlWorker);
+  const xpathWorkerClient = createXPathWorkerClient(spawnXmlWorker);
   window.addEventListener('pagehide', () => {
     workerClient.dispose();
+    xpathWorkerClient.dispose();
   });
 
   const t = (key: MessageKey, params?: Readonly<Record<string, string | number>>): string =>
@@ -202,6 +212,7 @@ function mountApp(): void {
 
   let activeTextarea: HTMLTextAreaElement | null = null;
   let updateViewsFn: (() => void) | null = null;
+  let updateXPathViewFn: (() => void) | null = null;
   let setCheckingStateFn: (() => void) | null = null;
 
   const clearDebounce = (): void => {
@@ -209,6 +220,70 @@ function mountApp(): void {
       clearTimeout(debounceTimer);
       debounceTimer = null;
     }
+  };
+
+  const clearXPathDebounce = (): void => {
+    if (xpathDebounceTimer !== null) {
+      clearTimeout(xpathDebounceTimer);
+      xpathDebounceTimer = null;
+    }
+  };
+
+  const clearXPathStatus = (): void => {
+    ++xpathEpoch;
+    clearXPathDebounce();
+    xpathWorkerClient.cancel();
+    xpathStatus = { kind: 'none' };
+    updateXPathViewFn?.();
+  };
+
+  const runXPathLookup = async (xmlText: string, cursorOffset: number): Promise<void> => {
+    const requestEpoch = ++xpathEpoch;
+    if (
+      xmlText.trim().length === 0 ||
+      utf8ByteLength(xmlText) > MAX_PREVIEW_BYTES ||
+      validationStatus.kind === 'decode-error' ||
+      validationStatus.kind === 'too-large' ||
+      validationStatus.kind === 'read-error'
+    ) {
+      xpathWorkerClient.cancel();
+      xpathStatus = { kind: 'none' };
+      updateXPathViewFn?.();
+      return;
+    }
+
+    const outcome = await xpathWorkerClient.getXPathAtOffset(xmlText, cursorOffset);
+    if (
+      outcome.status === 'cancelled' ||
+      shouldDiscardAsyncXPathResult({
+        requestEpoch,
+        currentEpoch: xpathEpoch,
+        sentText: xmlText,
+        sentOffset: cursorOffset,
+        currentTextareaValue: activeTextarea?.value ?? xmlDraft,
+        currentSelectionStart: activeTextarea?.selectionStart ?? 0,
+      })
+    ) {
+      return;
+    }
+
+    xpathStatus = xpathStatusFromWorkerOutcome(outcome);
+    updateXPathViewFn?.();
+  };
+
+  const scheduleXPathLookup = (delayMs: number = XPATH_DEBOUNCE_MS): void => {
+    clearXPathDebounce();
+    xpathWorkerClient.cancel();
+    if (delayMs <= 0) {
+      const target = activeTextarea;
+      void runXPathLookup(target?.value ?? xmlDraft, target?.selectionStart ?? 0);
+      return;
+    }
+    xpathDebounceTimer = setTimeout(() => {
+      xpathDebounceTimer = null;
+      const target = activeTextarea;
+      void runXPathLookup(target?.value ?? xmlDraft, target?.selectionStart ?? 0);
+    }, delayMs);
   };
 
   const runWorkerCheck = async (
@@ -283,6 +358,7 @@ function mountApp(): void {
         encoding: decoded.encoding,
         diagnostics: decoded.diagnostics,
       };
+      clearXPathStatus();
       updateViewsFn?.();
       return;
     }
@@ -302,6 +378,7 @@ function mountApp(): void {
       lastAssumedEncoding = undefined;
       lastPreDiagnostics = [];
       validationStatus = { kind: 'too-large', limitMb: 1 };
+      clearXPathStatus();
       updateViewsFn?.();
       return;
     }
@@ -314,6 +391,7 @@ function mountApp(): void {
     loadedEncodingInfo = { encoding: decoded.encoding, hasBom: decoded.hasBom };
     lastAssumedEncoding = decoded.assumedEncoding;
     lastPreDiagnostics = decoded.diagnostics;
+    clearXPathStatus();
     await runWorkerCheck(xmlDraft, {
       assumedEncoding: decoded.assumedEncoding,
       preDiagnostics: decoded.diagnostics,
@@ -348,6 +426,7 @@ function mountApp(): void {
       workerClient.cancel();
       resetLoadedFileState();
       validationStatus = { kind: 'too-large', limitMb: 1 };
+      clearXPathStatus();
       updateViewsFn?.();
       return;
     }
@@ -356,6 +435,7 @@ function mountApp(): void {
       workerClient.cancel();
       resetLoadedFileState();
       validationStatus = { kind: 'read-error', detail: outcome.detail };
+      clearXPathStatus();
       updateViewsFn?.();
       return;
     }
@@ -626,7 +706,14 @@ function mountApp(): void {
         debounceTimer = null;
         void runWorkerCheck(scheduledText);
       }, INPUT_DEBOUNCE_MS);
+      scheduleXPathLookup();
     });
+
+    for (const cursorEvent of ['keyup', 'mouseup', 'focus', 'select'] as const) {
+      textarea.addEventListener(cursorEvent, () => {
+        scheduleXPathLookup();
+      });
+    }
 
     textarea.addEventListener('dragenter', (event) => {
       if (!isFileDataTransfer(event.dataTransfer)) {
@@ -696,11 +783,21 @@ function mountApp(): void {
     const statusStateField = createEl('span', { className: 'status-field' });
     const statusCountField = createEl('span', { className: 'status-field' });
     const statusEncodingField = createEl('span', { className: 'status-field' });
+    const statusXpathField = createEl('span', {
+      className: 'status-field status-xpath',
+      attrs: { id: 'status-xpath' },
+    });
     const statusLangField = createEl('span', {
       className: 'status-field',
       text: t('statusBar.language'),
     });
-    statusFields.append(statusStateField, statusCountField, statusEncodingField, statusLangField);
+    statusFields.append(
+      statusStateField,
+      statusCountField,
+      statusEncodingField,
+      statusXpathField,
+      statusLangField,
+    );
 
     const statusPrivacyField = createEl('span', {
       className: 'status-field',
@@ -943,6 +1040,7 @@ function mountApp(): void {
           const clampedOffset = Math.min(Math.max(0, rawOffset), target.value.length);
           target.focus();
           target.setSelectionRange(clampedOffset, clampedOffset);
+          scheduleXPathLookup(0);
         });
 
         item.appendChild(jumpBtn);
@@ -1071,9 +1169,34 @@ function mountApp(): void {
         statusCountField.textContent = t('statusBar.elements', { count: result.elementCount });
         renderDiagnosticsList(result.diagnostics, result.truncatedDiagnostics);
       }
+
+      updateXPathViewFn?.();
+    };
+
+    const updateXPathStatusView = (): void => {
+      const effectiveStatus: XPathStatusState =
+        validationStatus.kind === 'empty' ||
+        validationStatus.kind === 'too-large' ||
+        validationStatus.kind === 'decode-error' ||
+        validationStatus.kind === 'read-error' ||
+        (validationStatus.kind === 'checked' && !validationStatus.result.wellFormed)
+          ? { kind: 'none' }
+          : xpathStatus;
+      if (effectiveStatus.kind === 'path') {
+        statusXpathField.textContent = t('statusBar.xpath', {
+          value: effectiveStatus.breadcrumb,
+        });
+        statusXpathField.title = effectiveStatus.breadcrumb;
+      } else {
+        statusXpathField.textContent = t('statusBar.xpath', {
+          value: t('statusBar.xpathNone'),
+        });
+        statusXpathField.removeAttribute('title');
+      }
     };
 
     updateViewsFn = updateStatusViews;
+    updateXPathViewFn = updateXPathStatusView;
     setCheckingStateFn = () => {
       statusStateField.textContent = t('statusBar.checking');
     };
@@ -1092,6 +1215,7 @@ function mountApp(): void {
       resetLoadedFileState();
       xmlDraft = t('preview.sampleXml');
       textarea.value = xmlDraft;
+      clearXPathStatus();
       void runWorkerCheck(xmlDraft, { assumedEncoding: 'UTF-8' });
     });
 
@@ -1105,6 +1229,7 @@ function mountApp(): void {
         ++checkEpoch;
         workerClient.cancel();
         validationStatus = { kind: 'too-large', limitMb: 1 };
+        clearXPathStatus();
         updateViewsFn?.();
         return;
       }
@@ -1221,6 +1346,7 @@ function mountApp(): void {
         isModifiedSinceLoad = true;
         lastAssumedEncoding = undefined;
         lastPreDiagnostics = [];
+        scheduleXPathLookup(0);
         void runWorkerCheck(xmlDraft);
       } else if (formatWasUnmodifiedFile) {
         void runWorkerCheck(xmlDraft, {

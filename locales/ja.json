@@ -52,6 +52,8 @@
   "statusBar.encoding": "文字コード: {value}",
   "statusBar.encodingNone": "—",
   "statusBar.encodingWithBom": "{encoding} (BOM 有り)",
+  "statusBar.xpath": "XPath: {value}",
+  "statusBar.xpathNone": "—",
   "statusBar.language": "言語: JA",
   "statusBar.localOnly": "ローカル完結 · アップロードなし · テレメトリなし",
   "about.title": "XMLens について",

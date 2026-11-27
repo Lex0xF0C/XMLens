@@ -1,6 +1,7 @@
 import {
   checkWellFormedness,
   formatXml,
+  getXPathAtOffset,
   type FormatXmlOptions,
   type IndentStyle,
   type WellFormednessOptions,
@@ -176,6 +177,39 @@ export function handleWorkerRequest(rawRequest: unknown): WorkerResponse {
         id: rawRequest.id,
         ok: true,
         type: 'formatXml',
+        result,
+      };
+    } catch (err: unknown) {
+      return {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: rawRequest.id,
+        ok: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+  }
+
+  if (rawRequest.type === 'getXPathAtOffset') {
+    if (typeof rawRequest.payload.xml !== 'string') {
+      return invalidRequestResponse(rawRequest.id, 'Payload "xml" must be a string.');
+    }
+    if (
+      typeof rawRequest.payload.offset !== 'number' ||
+      !Number.isFinite(rawRequest.payload.offset)
+    ) {
+      return invalidRequestResponse(rawRequest.id, 'Payload "offset" must be a finite number.');
+    }
+
+    try {
+      const result = getXPathAtOffset(rawRequest.payload.xml, rawRequest.payload.offset);
+      return {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: rawRequest.id,
+        ok: true,
+        type: 'getXPathAtOffset',
         result,
       };
     } catch (err: unknown) {

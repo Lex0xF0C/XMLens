@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createWellFormednessWorkerClient,
+  createXPathWorkerClient,
   DEFAULT_FORMAT_TIMEOUT_MS,
   handleWorkerRequest,
   isWorkerResponse,
@@ -314,6 +315,60 @@ describe('worker protocol and handler', () => {
       }
     }
   });
+
+  it('handles getXPathAtOffset requests and strictly validates payloads', () => {
+    const xml = '<root><a><b/></a></root>';
+    const validRes = handleWorkerRequest({
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      id: 20,
+      type: 'getXPathAtOffset',
+      payload: { xml, offset: xml.indexOf('<b/>') + 1 },
+    });
+    expect(validRes.ok).toBe(true);
+    expect(isWorkerResponse(validRes)).toBe(true);
+    if (validRes.ok && validRes.type === 'getXPathAtOffset') {
+      expect(validRes.result).toMatchObject({
+        ok: true,
+        xpath: '/Q{}root[1]/Q{}a[1]/Q{}b[1]',
+        breadcrumb: 'root › a › b',
+      });
+    }
+
+    const badPayloads: readonly unknown[] = [
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 21,
+        type: 'getXPathAtOffset',
+        payload: { xml: 123, offset: 0 },
+      },
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 22,
+        type: 'getXPathAtOffset',
+        payload: { xml: '<a/>', offset: '0' },
+      },
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 23,
+        type: 'getXPathAtOffset',
+        payload: { xml: '<a/>', offset: Number.NaN },
+      },
+      {
+        protocolVersion: WORKER_PROTOCOL_VERSION,
+        id: 24,
+        type: 'getXPathAtOffset',
+        payload: { xml: '<a/>', offset: Number.POSITIVE_INFINITY },
+      },
+    ];
+
+    for (const rawReq of badPayloads) {
+      const res = handleWorkerRequest(rawReq);
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.error.code).toBe('INVALID_REQUEST');
+      }
+    }
+  });
 });
 
 function requireWorker(workers: readonly FakeWorker[], index: number): FakeWorker {
@@ -551,6 +606,78 @@ describe('createWellFormednessWorkerClient', () => {
     secondWorker.emitMessage(handleWorkerRequest(secondWorker.postedMessages[0]));
     const okOutcome = await recovered;
     expect(okOutcome.status).toBe('ok');
+
+    client.dispose();
+  });
+});
+
+describe('createXPathWorkerClient', () => {
+  it('resolves XPath lookups independently without cancelling in-flight check/format requests', async () => {
+    const checkWorkers: FakeWorker[] = [];
+    const xpathWorkers: FakeWorker[] = [];
+
+    const wfClient = createWellFormednessWorkerClient(() => {
+      const w = new FakeWorker();
+      checkWorkers.push(w);
+      return w;
+    });
+    const xpathClient = createXPathWorkerClient(() => {
+      const w = new FakeWorker();
+      xpathWorkers.push(w);
+      return w;
+    });
+
+    const xml = '<root><a>hi</a></root>';
+    const checkPromise = wfClient.check(xml);
+    const firstXPath = xpathClient.getXPathAtOffset(xml, 1);
+    const secondXPath = xpathClient.getXPathAtOffset(xml, xml.indexOf('hi'));
+
+    // Superseding XPath terminates only the XPath worker, leaving checkWorker untouched.
+    expect(checkWorkers).toHaveLength(1);
+    expect(requireWorker(checkWorkers, 0).terminated).toBe(false);
+    expect(xpathWorkers).toHaveLength(2);
+    expect(requireWorker(xpathWorkers, 0).terminated).toBe(true);
+    expect(await firstXPath).toEqual({ status: 'cancelled' });
+
+    const activeXPathWorker = requireWorker(xpathWorkers, 1);
+    activeXPathWorker.emitMessage(handleWorkerRequest(activeXPathWorker.postedMessages[0]));
+    const xpathOutcome = await secondXPath;
+    expect(xpathOutcome.status).toBe('ok');
+    if (xpathOutcome.status === 'ok' && xpathOutcome.result.ok) {
+      expect(xpathOutcome.result.breadcrumb).toBe('root › a');
+    }
+
+    const activeCheckWorker = requireWorker(checkWorkers, 0);
+    activeCheckWorker.emitMessage(handleWorkerRequest(activeCheckWorker.postedMessages[0]));
+    const checkOutcome = await checkPromise;
+    expect(checkOutcome.status).toBe('ok');
+
+    wfClient.dispose();
+    xpathClient.dispose();
+    expect(await xpathClient.getXPathAtOffset(xml, 1)).toEqual({ status: 'cancelled' });
+  });
+
+  it('terminates on XPath timeout and respawns on subsequent requests', async () => {
+    const workers: FakeWorker[] = [];
+    const client = createXPathWorkerClient(
+      () => {
+        const w = new FakeWorker();
+        workers.push(w);
+        return w;
+      },
+      { timeoutMs: 25 },
+    );
+
+    expect(await client.getXPathAtOffset('<a/>', 1)).toEqual({ status: 'timeout' });
+    expect(workers).toHaveLength(1);
+    expect(requireWorker(workers, 0).terminated).toBe(true);
+
+    const recovered = client.getXPathAtOffset('<a>hi</a>', 4);
+    expect(workers).toHaveLength(2);
+    const worker1 = requireWorker(workers, 1);
+    worker1.emitMessage(handleWorkerRequest(worker1.postedMessages[0]));
+    const outcome = await recovered;
+    expect(outcome.status).toBe('ok');
 
     client.dispose();
   });

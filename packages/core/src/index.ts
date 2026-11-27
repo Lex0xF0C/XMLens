@@ -81,3 +81,10 @@ export {
   type FormatXmlResult,
   type IndentStyle,
 } from './formatter';
+
+export {
+  getXPathAtOffset,
+  type XPathAtOffsetResult,
+  type XPathFailureReason,
+  type XPathSegment,
+} from './xpathAtOffset';
