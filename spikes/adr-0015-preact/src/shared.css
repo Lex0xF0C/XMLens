@@ -1,0 +1,7 @@
+:root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
+body { margin: 0; padding: 1rem; }
+#app { max-width: 42rem; }
+.tree { border: 1px solid currentColor; padding: .75rem; }
+.tree [role="treeitem"] { display: block; padding: .25rem .5rem; }
+.tree [role="treeitem"]:focus { outline: 2px solid currentColor; outline-offset: 1px; }
+button { font: inherit; margin-block: .5rem; }
