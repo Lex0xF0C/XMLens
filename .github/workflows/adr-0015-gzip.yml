@@ -1,0 +1,41 @@
+name: ADR-0015 gzip spike
+
+on:
+  push:
+    branches:
+      - experiment/adr-0015-gzip-measurement
+    paths:
+      - 'spikes/adr-0015-preact/**'
+      - '.github/workflows/adr-0015-gzip.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle-measurement:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+
+      - name: Install isolated spike dependencies
+        working-directory: spikes/adr-0015-preact
+        run: npm install --package-lock=false --ignore-scripts --no-audit --no-fund
+
+      - name: Build equivalent Plain DOM harness
+        working-directory: spikes/adr-0015-preact
+        run: npm run build:plain
+
+      - name: Build Preact + Signals harness
+        working-directory: spikes/adr-0015-preact
+        run: npm run build:preact
+
+      - name: Report raw and gzip sizes
+        working-directory: spikes/adr-0015-preact
+        run: npm run measure
