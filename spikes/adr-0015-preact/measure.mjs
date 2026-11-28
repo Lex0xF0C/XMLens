@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
+import { stdout } from 'node:process';
 
 async function collect(directory, result = []) {
   for (const name of await readdir(directory)) {
@@ -22,5 +23,5 @@ for (const variant of ['plain', 'preact']) {
     const group = files.filter(file => file.type === type);
     return [type, group.reduce((sum, file) => ({ raw: sum.raw + file.raw, gzip: sum.gzip + file.gzip }), { raw: 0, gzip: 0 })];
   }));
-  console.log(JSON.stringify({ variant, files, byType, total }, null, 2));
+  stdout.write(`${JSON.stringify({ variant, files, byType, total }, null, 2)}\\n`);
 }
