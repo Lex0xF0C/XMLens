@@ -590,7 +590,7 @@ describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
         requestEpoch: 3,
         currentEpoch: 3,
         sentText: '<a><b/></a>',
-        currentTextareaValue: '<a><b/></a>',
+        currentText: '<a><b/></a>',
       }),
     ).toBe(false);
 
@@ -599,7 +599,7 @@ describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
         requestEpoch: 3,
         currentEpoch: 4,
         sentText: '<a><b/></a>',
-        currentTextareaValue: '<a><b/></a>',
+        currentText: '<a><b/></a>',
       }),
     ).toBe(true);
 
@@ -608,7 +608,17 @@ describe('loadAndDecodeXmlFile & drag-drop helpers', () => {
         requestEpoch: 3,
         currentEpoch: 3,
         sentText: '<a><b/></a>',
-        currentTextareaValue: '<a><b/><c/></a>',
+        currentText: '<a><b/><c/></a>',
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldDiscardAsyncFormatResult({
+        requestEpoch: 3,
+        currentEpoch: 3,
+        sentText: '<a><b/></a>',
+        currentText: '<a><b/></a>',
+        isComposing: true,
       }),
     ).toBe(true);
   });

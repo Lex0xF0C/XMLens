@@ -7,6 +7,7 @@
   "toolbar.saveAs": "Save as...",
   "toolbar.loadSample": "Load sample",
   "toolbar.format": "Format",
+  "toolbar.search": "Search",
   "toolbar.checkWellFormedness": "Check well-formedness",
   "toolbar.about": "About",
   "nav.settingsLabel": "Display settings",

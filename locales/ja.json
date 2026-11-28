@@ -7,6 +7,7 @@
   "toolbar.saveAs": "名前を付けて保存...",
   "toolbar.loadSample": "サンプル読込",
   "toolbar.format": "整形",
+  "toolbar.search": "検索",
   "toolbar.checkWellFormedness": "整形式をチェック",
   "toolbar.about": "XMLens について",
   "nav.settingsLabel": "表示設定",

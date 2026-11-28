@@ -7,6 +7,28 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0014] - 2026-11-28
+
+- **Sync:** direct
+- **Refs:** ADR-0005, ADR-0012, ADR-0014, package.json, package-lock.json, packages/app/package.json, THIRD_PARTY_NOTICES.md, packages/app/public/THIRD_PARTY_NOTICES.md, locales/en.json, locales/ja.json, packages/app/src/styles.css, packages/app/src/main.ts, packages/app/src/decodeXml.ts, packages/app/src/decodeXml.test.ts, packages/app/src/xpathCursor.ts, packages/app/src/xpathCursor.test.ts, packages/app/src/validationView.ts, packages/app/src/validationView.test.ts, packages/app/src/editor/xmlEditorCore.ts, packages/app/src/editor/xmlEditor.ts, packages/app/src/editor/xmlEditorCore.test.ts, docs/adr/0005-codemirror-and-csp.md, docs/adr/0012-xml-formatter.md, docs/adr/0014-xpath-at-cursor.md, docs/feature-matrix.md, CHANGELOG.md
+
+### Added
+
+- Created `packages/app/src/editor/xmlEditorCore.ts` and `packages/app/src/editor/xmlEditor.ts` (`mountXmlEditor`) implementing CodeMirror 6 inside an open `ShadowRoot` with Constructable Stylesheets (`adoptedStyleSheets`) under `ADR-0005` Option A (omitting `EditorView.cspNonce` and `indentWithTab`, adding `PROGRAMMATIC_DOC_CHANGE_ANNOTATION`, `classifyEditorUpdate`, `createFormatTransactionSpec`, `evaluateFileDragEvent`, `Compartment` reconfiguration for `aria-label` and placeholder, XML syntax highlighting, folding, bracket matching, `@codemirror/lint` inline squiggles via `setDiagnostics`, and `@codemirror/search` top search panel).
+- Added `packages/app/src/editor/xmlEditorCore.test.ts` (6 Node/Vitest tests verifying programmatic Format annotation classification vs. Undo/Redo/selection/lint effects, Format caret clamping, `evaluateFileDragEvent`, `Compartment` reconfiguration preserving Undo history and empty `cspNonce`, UTF-16/CJK/astral lint mapping, XML folding/bracket matching, and XPath lookup extraction).
+- Added `#search-button` (`toolbar.search`: `"Search"` / `"検索"`) in `locales/en.json`, `locales/ja.json`, and `packages/app/src/main.ts` (`openSearchPanel`).
+
+### Changed
+
+- Moved `@codemirror/commands` (`6.11.2`), `@codemirror/lang-xml` (`6.1.0`), `@codemirror/language` (`6.13.1`), `@codemirror/lint` (`6.9.8`), `@codemirror/search` (`6.7.3`), `@codemirror/state` (`6.7.6`), `@codemirror/view` (`6.44.2`), and `@lezer/highlight` (`1.2.5`) from root `devDependencies` to `packages/app/package.json` `dependencies` (all `MIT`) and regenerated `THIRD_PARTY_NOTICES.md` and `packages/app/public/THIRD_PARTY_NOTICES.md` (`19` runtime packages).
+- Replaced `<textarea>` in `packages/app/src/main.ts` and `packages/app/src/styles.css` (adding `--cm-*` theme tokens and `.cm-host` / `.cm-host.is-drag-over`) with `mountXmlEditor`, keeping `packages/app/index.html` strict CSP untouched (`scripts/csp-build.test.mjs`), resetting Undo history via `view.setState(...)` on file/sample load, preserving Undo/selection/focus across in-place `applyLocale()`, guarding Format/file/sample/re-decode actions against `editor.isComposing()`, and intercepting file drag-and-drop in `EditorView.domEventHandlers` (before CodeMirror's built-in `handlers.drop`) with non-duplicating `.cm-host` fallback listeners.
+- Generalized `packages/app/src/xpathCursor.ts` (`currentText`, `currentOffset`, `isComposing`) and `packages/app/src/decodeXml.ts` (`currentText`, optional `isComposing`) along with their unit tests (`xpathCursor.test.ts`, `decodeXml.test.ts`).
+- Updated `docs/adr/0005-codemirror-and-csp.md` (recording re-measured production `dist/` gzip sizes, runtime dependency move, verified/unverified items, and production manual regression checklist), `docs/adr/0012-xml-formatter.md`, `docs/adr/0014-xpath-at-cursor.md`, and `docs/feature-matrix.md` (status `Partial (M1b Step 2)` pending live browser/`test:e2e` verification).
+
+### Fixed
+
+- Resolved Step 1 minor state/i18n gaps in `packages/app/src/validationView.ts`, `validationView.test.ts`, and `packages/app/src/main.ts` (`isProcessing` tracking with `resolveStatusBarState` so mid-flight locale switches preserve `statusBar.checking`, plus `detailKey: 'preview.workerTimeout'` on `format-failed` so format timeouts re-translate on locale switch).
+
 ## [DEV-0013] - 2026-11-28
 
 - **Sync:** direct

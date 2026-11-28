@@ -1,16 +1,16 @@
 # ADR-0005: CodeMirror 6 Integration Under Strict CSP (M1b Preparation)
 
-- **Status:** Accepted (2026-11-28 — M1b prerequisites satisfied; production `<textarea>` replacement in `packages/app` not yet started)
-- **Date:** 2026-11-24 (provisional conditions appended 2026-11-27; spike gates verified 2026-11-28)
+- **Status:** Accepted (2026-11-28 — M1b Step 2 production `<textarea>` replacement implemented in `packages/app`; live browser & production `test:e2e` verification pending)
+- **Date:** 2026-11-24 (provisional conditions appended 2026-11-27; spike gates verified 2026-11-28; M1b Step 2 integrated 2026-11-28)
 
 ### Acceptance Conditions & Ongoing M1b Constraints (2026-11-27 / Verified 2026-11-28)
 
-1. **`> 100 KB` gzipped exception (`AGENTS.md` §11):** The `+126.2–126.5 kB` gzipped bundle delta (~`10.57%` of the `1.5 MiB` budget) is approved **for CodeMirror 6 only**. (Re-measure and re-confirm when CodeMirror 6 is integrated into `packages/app` in M1b.)
-2. **Primary verification via CI `e2e-spike` (Passed 2026-11-28, run `46068522284`):** Automated verification ran via GitHub Actions `e2e-spike` across Chromium, Firefox, and WebKit (`6/6` tests passed: zero `securitypolicyviolation` via `page.addInitScript`, `<style>` `0`, `adoptedStyleSheets > 0`, and axe `wcag22aa`). Windows manual checklist Section B (`B-1` real IME, `B-2` `Tab` exit + Search panel, `B-3` screen reader, `B-4` themes / High Contrast / `prefers-reduced-motion`) also completed by the maintainer on 2026-11-28.
-3. **M1b production gating & escalation:** Both prerequisites for starting M1b (`e2e-spike` passing in all 3 browsers and Windows manual Section B) are now satisfied; replacing `<textarea>` in `packages/app` remains **not yet started** and awaits maintainer approval of the M1b plan. The escalation rule stays active: if any browser fails Option A during M1b or production `test:e2e`, **stop and return the decision to the maintainer** — do not automatically switch to Option C.
+1. **`> 100 KB` gzipped exception (`AGENTS.md` §11):** The `+126.2–126.5 kB` gzipped spike delta (and M1b Step 2 re-measured production main-entry JS delta of `+131,683 B` `zlib` level-9 / `+131.99 kB` Vite gzip, bringing total production `dist/` JS+CSS to `172,325 B` `zlib` level-9 = `~10.96%` of the `1.5 MiB` budget) is approved **for CodeMirror 6 only**.
+2. **Primary verification via CI `e2e-spike` (Passed 2026-11-28, run `46068522284`):** Automated verification ran via GitHub Actions `e2e-spike` across Chromium, Firefox, and WebKit (`6/6` tests passed: zero `securitypolicyviolation` via `page.addInitScript`, `<style>` `0`, `adoptedStyleSheets > 0`, and axe `wcag22aa`). Windows manual checklist Section B (`B-1` real IME, `B-2` `Tab` exit + Search panel, `B-3` screen reader, `B-4` themes / High Contrast / `prefers-reduced-motion`) also completed by the maintainer on 2026-11-28 for `spikes/codemirror/`.
+3. **M1b production gating & escalation:** Both prerequisites for starting M1b (`e2e-spike` passing in all 3 browsers and Windows manual Section B) passed, and M1b Step 2 has replaced `<textarea>` in `packages/app`. The escalation rule stays active: if any browser fails Option A during M1b manual regression or upcoming production `test:e2e`, **stop and return the decision to the maintainer** — do not automatically switch to Option C.
 4. **M1b integration design constraints:**
    - File opening and sample loading must reset Undo history using a fresh `EditorState` (`view.setState(...)`), not a document replacement transaction.
-   - `ariaLabel` must update on i18n locale changes via `Compartment.reconfigure` (without destroying/re-mounting the `EditorView` and Undo stack).
+   - `ariaLabel` (and placeholder) must update on i18n locale changes via `Compartment.reconfigure` (without destroying/re-mounting the `EditorView` and Undo stack).
    - Continue omitting `EditorView.cspNonce` and `indentWithTab`.
 
 ## Context
@@ -189,3 +189,47 @@ npx vite preview --config spikes/codemirror/vite.config.ts --host 127.0.0.1 --po
 2. **(`B-2`, Verified 2026-11-28) Keyboard-only `Tab` exit & Search panel (`Ctrl+F`):** Focus the editor, press `Tab` and `Shift+Tab`, and confirm focus exits the editor cleanly (no keyboard trap). Press `Ctrl+F` (or click **Search**), navigate search panel inputs/buttons with `Tab`, and press `Escape` to return focus to the editor while confirming `CSP violations: 0`.
 3. **(`B-3`, Verified 2026-11-28) Screen reader announcement:** Focus the editor and confirm the screen reader announces `XML Input` / `XML 入力` and editable role; navigate to a diagnostic item and confirm location/message readout.
 4. **(`B-4`, Verified 2026-11-28) Themes & High Contrast / `prefers-reduced-motion`:** Switch **Light / Dark / High contrast** in the spike toolbar, inspect syntax colors, selection background, gutter, and `2px` focus ring readability; verify cursor blinking stops when Windows animation effects are reduced.
+
+## M1b Step 2 Production Integration (`packages/app`, 2026-11-28)
+
+M1b Step 2 replaced the temporary `<textarea>` in `packages/app` with `mountXmlEditor` (`packages/app/src/editor/xmlEditor.ts` and `packages/app/src/editor/xmlEditorCore.ts`) under Option A (`ShadowRoot` + `adoptedStyleSheets`), keeping `packages/app/index.html` CSP strictly unchanged (`scripts/csp-build.test.mjs` passing).
+
+### 1. Dependencies & Third-Party Notices
+
+- Moved `@codemirror/commands` (`6.11.2`), `@codemirror/lang-xml` (`6.1.0`), `@codemirror/language` (`6.13.1`), `@codemirror/lint` (`6.9.8`), `@codemirror/search` (`6.7.3`), `@codemirror/state` (`6.7.6`), `@codemirror/view` (`6.44.2`), and `@lezer/highlight` (`1.2.5`) from root `devDependencies` to `packages/app/package.json` `dependencies` (exact pinned versions).
+- `npm run license:check` (`201` packages inspected, `4` approved exceptions) and `npm run notices:check` (`19` runtime packages, all CodeMirror/Lezer runtime & transitive packages `MIT`) pass; `THIRD_PARTY_NOTICES.md` and `packages/app/public/THIRD_PARTY_NOTICES.md` updated via `npm run notices:generate`.
+
+### 2. Re-Measured Production Bundle Sizes (`vite@7.3.8`)
+
+| Artifact / Bundle (`npm run build` M1b Step 2) | Raw Size    | Vite Gzip (`kB`) | `zlib` level-9 Gzip (`B`) | Share of `1.5 MiB` Budget (`1,572,864 B`) |
+| ---------------------------------------------- | ----------- | ---------------- | ------------------------- | ----------------------------------------- |
+| Production `dist/assets/index-*.css`           | `8,525` B   | `2.34` kB        | `2,341` B                 | —                                         |
+| Production `dist/assets/index-*.js`            | `485,491` B | `156.33` kB      | `155,974` B               | —                                         |
+| Production `dist/assets/xmlWorker-*.js`        | `47,903` B  | —                | `14,010` B                | —                                         |
+| **Production `dist/` Total JS + CSS**          | `541,919` B | —                | **`172,325` B**           | **`~10.96%`**                             |
+
+- **Delta vs. pre-M1b production baseline (`24,291 B` `zlib9` main JS / `40,492 B` total):** Main-entry JS `+131,683 B` `zlib9` (`+131.99 kB` Vite gzip); total JS+CSS `+131,833 B` `zlib9` (`+5,449 B` main-JS `zlib9` above the minimal spike due to production `saveXml`, `decodeXml`, `validationView`, `xpathCursor`, and `Compartment` support).
+
+### 3. Verified vs. `unverified` (Production `packages/app`)
+
+- **Verified (Node / Build):**
+  - `packages/app/src/editor/xmlEditorCore.test.ts` (`6/6`): `PROGRAMMATIC_DOC_CHANGE_ANNOTATION` + `classifyEditorUpdate` vs. Undo/Redo/selection/lint effects, Format caret clamping, `evaluateFileDragEvent`, `Compartment` `aria-label` reconfiguration preserving Undo history & empty `cspNonce`, UTF-16/CJK/astral diagnostic mapping, XML folding/bracket matching/XPath extraction.
+  - `npm run check` (`20/20` Vitest files, `202/202` tests, `lint`, `format:check`, `typecheck`, `i18n:check`, `plugins:guard`, `license:check`, `notices:check`, `changelog:check`) and `npm run build` (`scripts/csp-build.test.mjs`).
+  - Static inspection of `@codemirror/view@6.44.2`: plugin `domEventHandlers` execute before built-in `handlers.drop` (preventing CodeMirror's `FileReader` text insertion when `evaluateFileDragEvent` intercepts `'Files'`), and desktop browsers attach `compositionend` directly to `view.contentDOM` (Android `EditContext` branch only).
+- **`unverified` (Headless AI Studio Cannot Run Live Browsers):**
+  - Live browser `ShadowRoot` + `adoptedStyleSheets` rendering and zero `securitypolicyviolation` in production `packages/app` across Chromium, Firefox, WebKit.
+  - Real Japanese IME (`view.composing` / `compositionend`), file drag-and-drop over `.cm-content` vs gutters, **Format** → **Undo** → **Redo**, locale switch preserving Undo/selection/focus, **Search** panel keyboard navigation, screen-reader announcement, 3 themes / High Contrast / `prefers-reduced-motion`, and macOS/Safari hardware verification.
+
+### 4. Production Manual Regression Checklist (`packages/app`, Pending Maintainer Check)
+
+```bash
+npm run build
+npm run preview
+```
+
+1. **CSP & ShadowRoot:** Open `http://127.0.0.1:3000/` in DevTools Console; confirm `0` CSP/console errors and `#cm-host.shadowRoot` has `0` `<style>` elements and `> 0` `adoptedStyleSheets`.
+2. **Locale Switch In-Place Preservation:** Edit XML, keep focus & selection inside editor, switch `English` ↔ `日本語`, confirm editor value, selection/caret, focus, and `Ctrl+Z` Undo history remain intact while `#cm-host` `.cm-content` `aria-label`, placeholder, toolbar, status bar, and diagnostics update.
+3. **Format → Undo → Redo & Search Panel:** Load sample or unformatted XML, click **Format**, confirm formatted output and `Ctrl+Z` / `Ctrl+Y` single-step Undo/Redo; press `Ctrl+F` or click **Search**, Tab through panel controls, press `Escape` to return focus to editor.
+4. **Real Japanese IME & Guards:** Type/convert/cancel Japanese text inside an element; confirm no duplicate characters, clean `XPath` breadcrumb update after commit, and Format/file/sample operations do not mutate text mid-composition.
+5. **File Drag-and-Drop & `Tab` Exit:** Drop an XML file onto both `.cm-content` and the line-number gutter; confirm `openXmlFile` loads the decoded document with clean Undo history (no raw file text insertion) and `Tab`/`Shift+Tab` move focus out of the editor cleanly.
+6. **Themes, Screen Reader, Motion:** Verify Light / Dark / High contrast, reduced-motion cursor blink suppression, and screen-reader `XML Input` / `XML 入力` announcement.

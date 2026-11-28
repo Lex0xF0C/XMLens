@@ -25,6 +25,7 @@ export type ValidationStatus =
       readonly kind: 'format-failed';
       readonly reason: 'output-too-large' | 'internal-error';
       readonly detail?: string;
+      readonly detailKey?: ValidationMessageKey;
       readonly diagnostics: readonly Diagnostic[];
     };
 
@@ -34,6 +35,7 @@ export interface ValidationViewModel {
   readonly resultClasses: readonly ResultBoxStateClass[];
   readonly resultMessageKey: ValidationMessageKey;
   readonly resultMessageParams?: Readonly<Record<string, string | number>>;
+  readonly resultDetailKey?: ValidationMessageKey;
   readonly statusStateKey: ValidationMessageKey;
   readonly statusStateParams?: Readonly<Record<string, string | number>>;
   readonly elementCount: number;
@@ -117,6 +119,7 @@ export function buildValidationViewModel(status: ValidationStatus): ValidationVi
             : 'preview.formatError',
         resultMessageParams:
           status.reason === 'output-too-large' ? { limitMb: 1 } : { detail: status.detail ?? '' },
+        ...(status.detailKey !== undefined ? { resultDetailKey: status.detailKey } : {}),
         statusStateKey: 'statusBar.formatFailed',
         elementCount: 0,
         diagnostics: status.diagnostics,
@@ -172,6 +175,28 @@ export function buildValidationViewModel(status: ValidationStatus): ValidationVi
       };
     }
   }
+}
+
+export interface StatusBarStateDisplay {
+  readonly key: ValidationMessageKey;
+  readonly params?: Readonly<Record<string, string | number>>;
+}
+
+/**
+ * Resolves the active status bar state message so an in-flight worker check/format keeps
+ * displaying `statusBar.checking` even when the UI locale is switched mid-flight.
+ */
+export function resolveStatusBarState(
+  isProcessing: boolean,
+  viewModel: ValidationViewModel,
+): StatusBarStateDisplay {
+  if (isProcessing) {
+    return { key: 'statusBar.checking' };
+  }
+  return {
+    key: viewModel.statusStateKey,
+    ...(viewModel.statusStateParams !== undefined ? { params: viewModel.statusStateParams } : {}),
+  };
 }
 
 /**

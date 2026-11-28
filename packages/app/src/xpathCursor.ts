@@ -15,19 +15,22 @@ export interface AsyncXPathDiscardCheck {
   readonly currentEpoch: number;
   readonly sentText: string;
   readonly sentOffset: number;
-  readonly currentTextareaValue: string;
-  readonly currentSelectionStart: number;
+  readonly currentText: string;
+  readonly currentOffset: number;
+  readonly isComposing: boolean;
 }
 
 /**
- * Returns true when an async cursor XPath response is stale (request epoch superseded, editor
- * text changed, or caret moved while the worker call was in flight) and must be discarded.
+ * Returns true when an async cursor XPath response is stale (IME composition active, request
+ * epoch superseded, editor text changed, or caret moved while the worker call was in flight) and
+ * must be discarded.
  */
 export function shouldDiscardAsyncXPathResult(state: AsyncXPathDiscardCheck): boolean {
   return (
+    state.isComposing ||
     state.requestEpoch !== state.currentEpoch ||
-    state.sentText !== state.currentTextareaValue ||
-    state.sentOffset !== state.currentSelectionStart
+    state.sentText !== state.currentText ||
+    state.sentOffset !== state.currentOffset
   );
 }
 

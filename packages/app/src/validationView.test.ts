@@ -4,6 +4,7 @@ import {
   buildValidationViewModel,
   createInitialDocumentEditState,
   resolveEffectiveXPathStatus,
+  resolveStatusBarState,
   transitionDocumentEditState,
 } from './validationView';
 
@@ -259,6 +260,40 @@ describe('buildValidationViewModel', () => {
       elementCount: 0,
       diagnostics: [sampleErrorDiag],
       truncatedDiagnostics: false,
+    });
+
+    const timeoutVm = buildValidationViewModel({
+      kind: 'format-failed',
+      reason: 'internal-error',
+      detailKey: 'preview.workerTimeout',
+      diagnostics: [],
+    });
+    expect(timeoutVm).toEqual({
+      resultClasses: ['is-invalid'],
+      resultMessageKey: 'preview.formatError',
+      resultMessageParams: { detail: '' },
+      resultDetailKey: 'preview.workerTimeout',
+      statusStateKey: 'statusBar.formatFailed',
+      elementCount: 0,
+      diagnostics: [],
+      truncatedDiagnostics: false,
+    });
+
+    expect(resolveStatusBarState(true, timeoutVm)).toEqual({ key: 'statusBar.checking' });
+    expect(resolveStatusBarState(false, timeoutVm)).toEqual({ key: 'statusBar.formatFailed' });
+
+    const warningVm = buildValidationViewModel({
+      kind: 'checked',
+      result: {
+        wellFormed: true,
+        diagnostics: [sampleWarningDiag],
+        elementCount: 1,
+        truncatedDiagnostics: false,
+      },
+    });
+    expect(resolveStatusBarState(false, warningVm)).toEqual({
+      key: 'statusBar.warnings',
+      params: { count: 1 },
     });
   });
 });

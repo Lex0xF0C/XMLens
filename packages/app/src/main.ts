@@ -20,10 +20,8 @@ import {
   decodeXmlBytes,
   ENCODING_OVERRIDE_OPTIONS,
   enforceFormattedByteLimit,
-  isFileDataTransfer,
   loadAndDecodeXmlFile,
   normalizeDecodedTextForEditor,
-  pickFirstDroppedFile,
   resolveFormatWorkerOptions,
   shouldDiscardAsyncFormatResult,
   utf8ByteLength,
@@ -43,6 +41,7 @@ import {
   buildValidationViewModel,
   createInitialDocumentEditState,
   resolveEffectiveXPathStatus,
+  resolveStatusBarState,
   transitionDocumentEditState,
   type DocumentEditState,
   type ValidationMessageKey,
@@ -54,6 +53,7 @@ import {
   xpathStatusFromWorkerOutcome,
   type XPathStatusState,
 } from './xpathCursor';
+import { mountXmlEditor, type XmlEditor } from './editor/xmlEditor';
 import './styles.css';
 
 type ThemeMode = 'light' | 'dark' | 'high-contrast';
@@ -136,14 +136,6 @@ function isIndentStyle(value: string): value is IndentStyle {
   return value === 'spaces-2' || value === 'spaces-4' || value === 'tab';
 }
 
-function replaceTextareaValue(textarea: HTMLTextAreaElement, nextValue: string): void {
-  if (typeof textarea.setRangeText === 'function') {
-    textarea.setRangeText(nextValue, 0, textarea.value.length, 'start');
-  } else {
-    textarea.value = nextValue;
-  }
-}
-
 function mountApp(): void {
   const root = document.getElementById('app');
   if (!root) {
@@ -162,6 +154,7 @@ function mountApp(): void {
   let xmlDraft = '';
   let validationStatus: ValidationStatus = { kind: 'empty' };
   let xpathStatus: XPathStatusState = { kind: 'none' };
+  let isProcessing = false;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let xpathDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let checkEpoch = 0;
@@ -176,7 +169,9 @@ function mountApp(): void {
     new Worker(new URL('../../workers/src/xmlWorker.ts', import.meta.url), { type: 'module' });
   const workerClient = createWellFormednessWorkerClient(spawnXmlWorker);
   const xpathWorkerClient = createXPathWorkerClient(spawnXmlWorker);
+  let editor: XmlEditor | null = null;
   window.addEventListener('pagehide', () => {
+    editor?.dispose();
     workerClient.dispose();
     xpathWorkerClient.dispose();
   });
@@ -249,6 +244,10 @@ function mountApp(): void {
     className: 'tb-btn',
     attrs: { id: 'format-button', type: 'button' },
   });
+  const searchBtn = createEl('button', {
+    className: 'tb-btn',
+    attrs: { id: 'search-button', type: 'button' },
+  });
   const checkBtn = createEl('button', {
     className: 'tb-btn',
     attrs: { type: 'button' },
@@ -264,6 +263,7 @@ function mountApp(): void {
     saveBtn,
     sampleBtn,
     formatBtn,
+    searchBtn,
     checkBtn,
     createEl('span', { className: 'toolbar-sep', attrs: { 'aria-hidden': 'true' } }),
     aboutBtn,
@@ -373,16 +373,11 @@ function mountApp(): void {
   });
   editorPane.appendChild(editorHeading);
 
-  const textarea = createEl('textarea', {
-    className: 'xml-textarea',
-    attrs: {
-      id: 'xml-preview-input',
-      'aria-labelledby': 'editor-pane-heading',
-      spellcheck: 'false',
-    },
+  const cmHost = createEl('div', {
+    className: 'cm-host',
+    attrs: { id: 'cm-host' },
   });
-  textarea.value = xmlDraft;
-  editorPane.appendChild(textarea);
+  editorPane.appendChild(cmHost);
 
   const diagnosticsPane = createEl('section', {
     className: 'pane',
@@ -672,10 +667,10 @@ function mountApp(): void {
       jumpBtn.appendChild(createEl('span', { className: 'diag-text', text: localizedMsg }));
 
       jumpBtn.addEventListener('click', () => {
-        const rawOffset = diag.range?.offset ?? 0;
-        const clampedOffset = Math.min(Math.max(0, rawOffset), textarea.value.length);
-        textarea.focus();
-        textarea.setSelectionRange(clampedOffset, clampedOffset);
+        editor?.setSelection(diag.range?.offset ?? 0, {
+          focus: true,
+          scrollIntoView: true,
+        });
         scheduleXPathLookup(0);
       });
 
@@ -709,6 +704,9 @@ function mountApp(): void {
     }
   };
 
+  const formatDiagnosticMessage = (diag: Diagnostic): string =>
+    formatMessage(CATALOGS[locale], CATALOGS.en, diag.messageKey, diag.params);
+
   const updateStatusViews = (): void => {
     resultBox.classList.remove('is-valid', 'is-invalid', 'has-warnings');
     diagListContainer.replaceChildren();
@@ -725,14 +723,21 @@ function mountApp(): void {
     for (const cls of viewModel.resultClasses) {
       resultBox.classList.add(cls);
     }
-    resultBox.textContent = t(viewModel.resultMessageKey, viewModel.resultMessageParams);
-    statusStateField.textContent = t(viewModel.statusStateKey, viewModel.statusStateParams);
+    const resultParams =
+      viewModel.resultDetailKey !== undefined
+        ? { ...viewModel.resultMessageParams, detail: t(viewModel.resultDetailKey) }
+        : viewModel.resultMessageParams;
+    resultBox.textContent = t(viewModel.resultMessageKey, resultParams);
+    const statusStateDisplay = resolveStatusBarState(isProcessing, viewModel);
+    statusStateField.textContent = t(statusStateDisplay.key, statusStateDisplay.params);
     statusCountField.textContent = t('statusBar.elements', { count: viewModel.elementCount });
     renderDiagnosticsList(viewModel.diagnostics, viewModel.truncatedDiagnostics);
+    editor?.setDiagnostics(viewModel.diagnostics, formatDiagnosticMessage);
     updateXPathStatusView();
   };
 
   const setCheckingState = (): void => {
+    isProcessing = true;
     statusStateField.textContent = t('statusBar.checking');
   };
 
@@ -775,6 +780,7 @@ function mountApp(): void {
     saveBtn.textContent = t('toolbar.saveAs');
     sampleBtn.textContent = t('toolbar.loadSample');
     formatBtn.textContent = t('toolbar.format');
+    searchBtn.textContent = t('toolbar.search');
     checkBtn.textContent = t('toolbar.checkWellFormedness');
     aboutBtn.textContent = t('toolbar.about');
 
@@ -813,7 +819,8 @@ function mountApp(): void {
     }
 
     editorHeading.textContent = t('pane.editorHeading');
-    textarea.placeholder = t('preview.placeholder');
+    editor?.setAriaLabel(t('pane.editorHeading'));
+    editor?.setPlaceholder(t('preview.placeholder'));
     diagHeading.textContent = t('pane.diagnosticsHeading');
 
     statusBar.setAttribute('aria-label', t('statusBar.label'));
@@ -846,6 +853,7 @@ function mountApp(): void {
   const runXPathLookup = async (xmlText: string, cursorOffset: number): Promise<void> => {
     const requestEpoch = ++xpathEpoch;
     if (
+      editor?.isComposing() ||
       xmlText.trim().length === 0 ||
       utf8ByteLength(xmlText) > MAX_PREVIEW_BYTES ||
       validationStatus.kind === 'decode-error' ||
@@ -853,8 +861,10 @@ function mountApp(): void {
       validationStatus.kind === 'read-error'
     ) {
       xpathWorkerClient.cancel();
-      xpathStatus = { kind: 'none' };
-      updateXPathStatusView();
+      if (!editor?.isComposing()) {
+        xpathStatus = { kind: 'none' };
+        updateXPathStatusView();
+      }
       return;
     }
 
@@ -866,8 +876,9 @@ function mountApp(): void {
         currentEpoch: xpathEpoch,
         sentText: xmlText,
         sentOffset: cursorOffset,
-        currentTextareaValue: textarea.value,
-        currentSelectionStart: textarea.selectionStart ?? 0,
+        currentText: editor?.getText() ?? '',
+        currentOffset: editor?.headOffset() ?? 0,
+        isComposing: editor?.isComposing() ?? false,
       })
     ) {
       return;
@@ -880,13 +891,21 @@ function mountApp(): void {
   const scheduleXPathLookup = (delayMs: number = XPATH_DEBOUNCE_MS): void => {
     clearXPathDebounce();
     xpathWorkerClient.cancel();
+    if (editor?.isComposing()) {
+      return;
+    }
+    const currentText = editor?.getText() ?? '';
+    const currentOffset = editor?.headOffset() ?? 0;
     if (delayMs <= 0) {
-      void runXPathLookup(textarea.value, textarea.selectionStart ?? 0);
+      void runXPathLookup(currentText, currentOffset);
       return;
     }
     xpathDebounceTimer = setTimeout(() => {
       xpathDebounceTimer = null;
-      void runXPathLookup(textarea.value, textarea.selectionStart ?? 0);
+      if (editor?.isComposing()) {
+        return;
+      }
+      void runXPathLookup(editor?.getText() ?? '', editor?.headOffset() ?? 0);
     }, delayMs);
   };
 
@@ -901,6 +920,7 @@ function mountApp(): void {
     const trimmed = xmlText.trim();
     if (!trimmed) {
       workerClient.cancel();
+      isProcessing = false;
       validationStatus = { kind: 'empty' };
       updateStatusViews();
       return;
@@ -908,6 +928,7 @@ function mountApp(): void {
 
     if (utf8ByteLength(xmlText) > MAX_PREVIEW_BYTES) {
       workerClient.cancel();
+      isProcessing = false;
       validationStatus = { kind: 'too-large', limitMb: 1 };
       updateStatusViews();
       return;
@@ -923,6 +944,7 @@ function mountApp(): void {
       return;
     }
 
+    isProcessing = false;
     if (outcome.status === 'ok') {
       const preDiags = checkOptions?.preDiagnostics ?? [];
       const result: WellFormednessResult =
@@ -942,11 +964,15 @@ function mountApp(): void {
   };
 
   const applyDecodedBytesResult = async (decoded: DecodeXmlResult): Promise<void> => {
+    if (editor?.isComposing()) {
+      return;
+    }
     if (!decoded.ok) {
       ++checkEpoch;
       workerClient.cancel();
+      isProcessing = false;
       xmlDraft = '';
-      textarea.value = '';
+      editor?.setDocument('');
       loadedEncodingInfo = { encoding: decoded.encoding, hasBom: decoded.hasBom };
       loadedLineEnding = 'LF';
       documentEditState = transitionDocumentEditState(documentEditState, {
@@ -964,13 +990,14 @@ function mountApp(): void {
     }
 
     // Detect dominant line ending before normalizing CRLF/CR to LF so xmlDraft, size checks,
-    // worker diagnostic offsets, and <textarea>.value share identical LF coordinates.
+    // worker diagnostic offsets, and CodeMirror doc share identical LF coordinates.
     const normalizedEditor = normalizeDecodedTextForEditor(decoded.text);
     if (utf8ByteLength(normalizedEditor.text) > MAX_PREVIEW_BYTES) {
       ++checkEpoch;
       workerClient.cancel();
+      isProcessing = false;
       xmlDraft = '';
-      textarea.value = '';
+      editor?.setDocument('');
       loadedEncodingInfo = null;
       loadedLineEnding = 'LF';
       documentEditState = transitionDocumentEditState(documentEditState, {
@@ -984,7 +1011,7 @@ function mountApp(): void {
 
     loadedLineEnding = normalizedEditor.lineEnding;
     xmlDraft = normalizedEditor.text;
-    textarea.value = xmlDraft;
+    editor?.setDocument(xmlDraft);
     loadedEncodingInfo = { encoding: decoded.encoding, hasBom: decoded.hasBom };
     documentEditState = transitionDocumentEditState(documentEditState, {
       type: 'file-loaded',
@@ -999,6 +1026,9 @@ function mountApp(): void {
   };
 
   const decodeAndCheckLoadedBytes = async (bytes: Uint8Array): Promise<void> => {
+    if (editor?.isComposing()) {
+      return;
+    }
     clearDebounce();
     const decoded = decodeXmlBytes(bytes, encodingOverride);
     await applyDecodedBytesResult(decoded);
@@ -1018,12 +1048,13 @@ function mountApp(): void {
     clearDebounce();
     const fileEpoch = ++checkEpoch;
     const outcome = await loadAndDecodeXmlFile(file, MAX_PREVIEW_BYTES, encodingOverride);
-    if (fileEpoch !== checkEpoch) {
+    if (fileEpoch !== checkEpoch || editor?.isComposing()) {
       return;
     }
 
     if (outcome.status === 'too-large') {
       workerClient.cancel();
+      isProcessing = false;
       resetLoadedFileState();
       validationStatus = { kind: 'too-large', limitMb: 1 };
       clearXPathStatus();
@@ -1033,6 +1064,7 @@ function mountApp(): void {
 
     if (outcome.status === 'read-error') {
       workerClient.cancel();
+      isProcessing = false;
       resetLoadedFileState();
       validationStatus = { kind: 'read-error', detail: outcome.detail };
       clearXPathStatus();
@@ -1044,6 +1076,42 @@ function mountApp(): void {
     loadedFileName = file.name;
     await applyDecodedBytesResult(outcome.decoded);
   };
+
+  editor = mountXmlEditor({
+    host: cmHost,
+    initialText: xmlDraft,
+    ariaLabel: t('pane.editorHeading'),
+    placeholderText: t('preview.placeholder'),
+    onUpdate(classification) {
+      if (classification.docChanged) {
+        xmlDraft = editor?.getText() ?? '';
+        if (classification.userEdited) {
+          documentEditState = transitionDocumentEditState(documentEditState, {
+            type: 'user-edited',
+          });
+          clearDebounce();
+          workerClient.cancel();
+          isProcessing = false;
+          const scheduledText = xmlDraft;
+          debounceTimer = setTimeout(() => {
+            debounceTimer = null;
+            void runWorkerCheck(scheduledText);
+          }, INPUT_DEBOUNCE_MS);
+        }
+        scheduleXPathLookup();
+      } else if (classification.selectionSet) {
+        scheduleXPathLookup();
+      }
+    },
+    onCompositionEnd() {
+      scheduleXPathLookup();
+    },
+    onFileDrop(droppedFile) {
+      if (droppedFile) {
+        void openXmlFile(droppedFile);
+      }
+    },
+  });
 
   openBtn.addEventListener('click', () => {
     fileInput.value = '';
@@ -1089,62 +1157,6 @@ function mountApp(): void {
     }
   });
 
-  textarea.addEventListener('input', () => {
-    xmlDraft = textarea.value;
-    documentEditState = transitionDocumentEditState(documentEditState, {
-      type: 'user-edited',
-    });
-    clearDebounce();
-    workerClient.cancel();
-    const scheduledText = xmlDraft;
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null;
-      void runWorkerCheck(scheduledText);
-    }, INPUT_DEBOUNCE_MS);
-    scheduleXPathLookup();
-  });
-
-  for (const cursorEvent of ['keyup', 'mouseup', 'focus', 'select'] as const) {
-    textarea.addEventListener(cursorEvent, () => {
-      scheduleXPathLookup();
-    });
-  }
-
-  textarea.addEventListener('dragenter', (event) => {
-    if (!isFileDataTransfer(event.dataTransfer)) {
-      return;
-    }
-    event.preventDefault();
-    textarea.classList.add('is-drag-over');
-  });
-
-  textarea.addEventListener('dragover', (event) => {
-    if (!isFileDataTransfer(event.dataTransfer)) {
-      return;
-    }
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'copy';
-    }
-    textarea.classList.add('is-drag-over');
-  });
-
-  textarea.addEventListener('dragleave', () => {
-    textarea.classList.remove('is-drag-over');
-  });
-
-  textarea.addEventListener('drop', (event) => {
-    textarea.classList.remove('is-drag-over');
-    const droppedFile = pickFirstDroppedFile(event.dataTransfer);
-    if (!isFileDataTransfer(event.dataTransfer)) {
-      return;
-    }
-    event.preventDefault();
-    if (droppedFile) {
-      void openXmlFile(droppedFile);
-    }
-  });
-
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];
     if (!file) {
@@ -1154,22 +1166,33 @@ function mountApp(): void {
   });
 
   sampleBtn.addEventListener('click', () => {
+    if (editor?.isComposing()) {
+      return;
+    }
     clearDebounce();
     resetLoadedFileState();
     xmlDraft = t('preview.sampleXml');
-    textarea.value = xmlDraft;
+    editor?.setDocument(xmlDraft);
     clearXPathStatus();
     void runWorkerCheck(xmlDraft, { assumedEncoding: 'UTF-8' });
   });
 
+  searchBtn.addEventListener('click', () => {
+    editor?.openSearchPanel();
+  });
+
   formatBtn.addEventListener('click', async () => {
+    if (editor?.isComposing()) {
+      return;
+    }
     clearDebounce();
-    const sentText = textarea.value;
+    const sentText = editor?.getText() ?? '';
     xmlDraft = sentText;
 
     if (utf8ByteLength(sentText) > MAX_PREVIEW_BYTES) {
       ++checkEpoch;
       workerClient.cancel();
+      isProcessing = false;
       validationStatus = { kind: 'too-large', limitMb: 1 };
       clearXPathStatus();
       updateStatusViews();
@@ -1200,11 +1223,13 @@ function mountApp(): void {
           requestEpoch: formatEpoch,
           currentEpoch: checkEpoch,
           sentText,
-          currentTextareaValue: textarea.value,
+          currentText: editor?.getText() ?? '',
+          isComposing: editor?.isComposing() ?? false,
         })
       ) {
         return;
       }
+      isProcessing = false;
       const detail = err instanceof Error ? err.message : String(err);
       validationStatus = {
         kind: 'format-failed',
@@ -1222,17 +1247,19 @@ function mountApp(): void {
         requestEpoch: formatEpoch,
         currentEpoch: checkEpoch,
         sentText,
-        currentTextareaValue: textarea.value,
+        currentText: editor?.getText() ?? '',
+        isComposing: editor?.isComposing() ?? false,
       })
     ) {
       return;
     }
 
     if (outcome.status === 'timeout') {
+      isProcessing = false;
       validationStatus = {
         kind: 'format-failed',
         reason: 'internal-error',
-        detail: t('preview.workerTimeout'),
+        detailKey: 'preview.workerTimeout',
         diagnostics: [],
       };
       updateStatusViews();
@@ -1240,6 +1267,7 @@ function mountApp(): void {
     }
 
     if (outcome.status === 'error') {
+      isProcessing = false;
       validationStatus = {
         kind: 'format-failed',
         reason: 'internal-error',
@@ -1252,6 +1280,7 @@ function mountApp(): void {
 
     const formattedResult = enforceFormattedByteLimit(outcome.result, MAX_PREVIEW_BYTES);
     if (!formattedResult.ok) {
+      isProcessing = false;
       const failureReason = classifyFormatFailure(formattedResult.diagnostics);
       if (failureReason === 'invalid') {
         validationStatus = {
@@ -1283,8 +1312,8 @@ function mountApp(): void {
     }
 
     if (formattedResult.changed) {
-      replaceTextareaValue(textarea, formattedResult.formatted);
-      xmlDraft = textarea.value;
+      editor?.replaceUndoable(formattedResult.formatted);
+      xmlDraft = editor?.getText() ?? formattedResult.formatted;
       documentEditState = transitionDocumentEditState(documentEditState, {
         type: 'format-succeeded',
         changed: true,
@@ -1303,7 +1332,7 @@ function mountApp(): void {
 
   checkBtn.addEventListener('click', () => {
     clearDebounce();
-    xmlDraft = textarea.value;
+    xmlDraft = editor?.getText() ?? '';
     if (loadedFileBytes !== null && !documentEditState.isModifiedSinceLoad) {
       void runWorkerCheck(xmlDraft, {
         ...(documentEditState.lastAssumedEncoding !== undefined
@@ -1337,7 +1366,7 @@ function mountApp(): void {
     const selectedEnc = isSaveEncoding(saveEncodingSelect.value)
       ? saveEncodingSelect.value
       : 'UTF-8';
-    const currentText = textarea.value;
+    const currentText = editor?.getText() ?? '';
     const declCheck = inspectXmlDeclarationForSave(currentText, selectedEnc);
     activeSaveSelectedEncoding = selectedEnc;
     activeSaveDeclCheck = declCheck;
@@ -1363,7 +1392,7 @@ function mountApp(): void {
   });
 
   saveBtn.addEventListener('click', () => {
-    xmlDraft = textarea.value;
+    xmlDraft = editor?.getText() ?? '';
     const prefs = getDefaultSavePreferences(loadedEncodingInfo, loadedLineEnding);
     saveFilenameInput.value = sanitizeDownloadFilename(loadedFileName);
     saveEncodingSelect.value = prefs.encoding;
@@ -1411,7 +1440,7 @@ function mountApp(): void {
     saveErrorBox.hidden = true;
     saveErrorBox.textContent = '';
 
-    const currentText = textarea.value;
+    const currentText = editor?.getText() ?? '';
     const chosenEncoding = isSaveEncoding(saveEncodingSelect.value)
       ? saveEncodingSelect.value
       : 'UTF-8';

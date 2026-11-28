@@ -455,13 +455,19 @@ export interface AsyncFormatDiscardCheck {
   readonly requestEpoch: number;
   readonly currentEpoch: number;
   readonly sentText: string;
-  readonly currentTextareaValue: string;
+  readonly currentText: string;
+  readonly isComposing?: boolean;
 }
 
 /**
- * Returns true if an async worker format result is stale (epoch superseded or editor text changed
- * while formatting was in flight) and must be discarded without mutating editor text or status.
+ * Returns true if an async worker format result is stale (IME composition active, epoch
+ * superseded, or editor text changed while formatting was in flight) and must be discarded without
+ * mutating editor text or status.
  */
 export function shouldDiscardAsyncFormatResult(state: AsyncFormatDiscardCheck): boolean {
-  return state.requestEpoch !== state.currentEpoch || state.sentText !== state.currentTextareaValue;
+  return (
+    state.isComposing === true ||
+    state.requestEpoch !== state.currentEpoch ||
+    state.sentText !== state.currentText
+  );
 }

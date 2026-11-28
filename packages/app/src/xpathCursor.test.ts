@@ -2,22 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { shouldDiscardAsyncXPathResult, xpathStatusFromWorkerOutcome } from './xpathCursor';
 
 describe('xpathCursor helpers', () => {
-  it('discards stale XPath responses when epoch, text, or selectionStart changes', () => {
+  it('discards stale or composing XPath responses when epoch, text, offset, or isComposing changes', () => {
     const base = {
       requestEpoch: 3,
       currentEpoch: 3,
       sentText: '<a><b/></a>',
       sentOffset: 5,
-      currentTextareaValue: '<a><b/></a>',
-      currentSelectionStart: 5,
+      currentText: '<a><b/></a>',
+      currentOffset: 5,
+      isComposing: false,
     };
 
     expect(shouldDiscardAsyncXPathResult(base)).toBe(false);
+    expect(shouldDiscardAsyncXPathResult({ ...base, isComposing: true })).toBe(true);
     expect(shouldDiscardAsyncXPathResult({ ...base, currentEpoch: 4 })).toBe(true);
-    expect(shouldDiscardAsyncXPathResult({ ...base, currentTextareaValue: '<a><c/></a>' })).toBe(
-      true,
-    );
-    expect(shouldDiscardAsyncXPathResult({ ...base, currentSelectionStart: 6 })).toBe(true);
+    expect(shouldDiscardAsyncXPathResult({ ...base, currentText: '<a><c/></a>' })).toBe(true);
+    expect(shouldDiscardAsyncXPathResult({ ...base, currentOffset: 6 })).toBe(true);
   });
 
   it('maps worker XPath outcomes to path or none status state', () => {
