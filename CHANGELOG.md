@@ -7,6 +7,20 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0013] - 2026-11-28
+
+- **Sync:** direct
+- **Refs:** ADR-0005, packages/app/src/main.ts, packages/app/src/validationView.ts, packages/app/src/validationView.test.ts, CHANGELOG.md
+
+### Added
+
+- Extracted `packages/app/src/validationView.ts` (`ValidationStatus`, `buildValidationViewModel`, `resolveEffectiveXPathStatus`, `createInitialDocumentEditState`, and `transitionDocumentEditState`) as DOM-free pure TypeScript helpers for M1b Step 1.
+- Added `packages/app/src/validationView.test.ts` covering all `ValidationStatus` branches (`empty`, `checked` valid/warnings/invalid/`formatRejected`, `too-large`, `decode-error` unsupported/decode-error, `read-error`, `worker-timeout`, `worker-error`, `format-failed` output-too-large/internal-error), `resolveEffectiveXPathStatus`, and `transitionDocumentEditState` transitions across file load, decode clear, sample load, user edit, and format.
+
+### Changed
+
+- Refactored `packages/app/src/main.ts` (M1b Step 1, keeping `<textarea>` unchanged and CodeMirror deferred to Step 2) to construct the workbench DOM once at mount and perform all language-switch updates in-place via `applyLocale()` instead of `root.replaceChildren()`, preserving `<textarea>` value/selection/focus, `documentEditState`, in-flight worker epochs, and open `saveDialog` state/checkbox selections while updating all document metadata, toolbar, settings options, panes, status bar, About dialog, Save dialog, and diagnostics views.
+
 ## [DEV-0012] - 2026-11-28
 
 - **Sync:** direct

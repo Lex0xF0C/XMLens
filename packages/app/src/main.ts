@@ -6,8 +6,11 @@ import {
   type IndentStyle,
   type LineEnding,
   type LocaleCode,
+  type LoneSurrogateLocation,
   type MessageCatalog,
+  type SaveEncoding,
   type WellFormednessResult,
+  type XmlDeclarationSaveCheck,
 } from '@xmlens/core';
 import { createWellFormednessWorkerClient, createXPathWorkerClient } from '@xmlens/workers';
 import enCatalog from '../../../locales/en.json';
@@ -37,6 +40,15 @@ import {
   triggerBlobDownload,
 } from './saveXml';
 import {
+  buildValidationViewModel,
+  createInitialDocumentEditState,
+  resolveEffectiveXPathStatus,
+  transitionDocumentEditState,
+  type DocumentEditState,
+  type ValidationMessageKey,
+  type ValidationStatus,
+} from './validationView';
+import {
   shouldDiscardAsyncXPathResult,
   XPATH_DEBOUNCE_MS,
   xpathStatusFromWorkerOutcome,
@@ -45,7 +57,6 @@ import {
 import './styles.css';
 
 type ThemeMode = 'light' | 'dark' | 'high-contrast';
-type MessageKey = keyof typeof enCatalog;
 
 const CATALOGS: Readonly<Record<LocaleCode, MessageCatalog>> = {
   en: enCatalog,
@@ -112,30 +123,6 @@ function createEl<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
-type ValidationStatus =
-  | { readonly kind: 'empty' }
-  | {
-      readonly kind: 'checked';
-      readonly result: WellFormednessResult;
-      readonly formatRejected?: boolean;
-    }
-  | { readonly kind: 'too-large'; readonly limitMb: number }
-  | {
-      readonly kind: 'decode-error';
-      readonly failureReason: 'unsupported' | 'decode-error';
-      readonly encoding: string;
-      readonly diagnostics: readonly Diagnostic[];
-    }
-  | { readonly kind: 'read-error'; readonly detail: string }
-  | { readonly kind: 'worker-timeout' }
-  | { readonly kind: 'worker-error'; readonly detail: string }
-  | {
-      readonly kind: 'format-failed';
-      readonly reason: 'output-too-large' | 'internal-error';
-      readonly detail?: string;
-      readonly diagnostics: readonly Diagnostic[];
-    };
-
 interface LoadedEncodingInfo {
   readonly encoding: string;
   readonly hasBom: boolean;
@@ -170,10 +157,8 @@ function mountApp(): void {
   let loadedFileBytes: Uint8Array | null = null;
   let loadedFileName: string | null = null;
   let loadedLineEnding: LineEnding = 'LF';
-  let isModifiedSinceLoad = false;
   let loadedEncodingInfo: LoadedEncodingInfo | null = null;
-  let lastAssumedEncoding: string | undefined;
-  let lastPreDiagnostics: readonly Diagnostic[] = [];
+  let documentEditState: DocumentEditState = createInitialDocumentEditState();
   let xmlDraft = '';
   let validationStatus: ValidationStatus = { kind: 'empty' };
   let xpathStatus: XPathStatusState = { kind: 'none' };
@@ -181,6 +166,11 @@ function mountApp(): void {
   let xpathDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let checkEpoch = 0;
   let xpathEpoch = 0;
+
+  let activeSaveLegacyEncoding: string | undefined;
+  let activeSaveDeclCheck: XmlDeclarationSaveCheck | null = null;
+  let activeSaveSelectedEncoding: SaveEncoding = 'UTF-8';
+  let activeSaveLoneSurrogate: LoneSurrogateLocation | null = null;
 
   const spawnXmlWorker = (): Worker =>
     new Worker(new URL('../../workers/src/xmlWorker.ts', import.meta.url), { type: 'module' });
@@ -191,8 +181,10 @@ function mountApp(): void {
     xpathWorkerClient.dispose();
   });
 
-  const t = (key: MessageKey, params?: Readonly<Record<string, string | number>>): string =>
-    formatMessage(CATALOGS[locale], CATALOGS.en, key, params);
+  const t = (
+    key: ValidationMessageKey,
+    params?: Readonly<Record<string, string | number>>,
+  ): string => formatMessage(CATALOGS[locale], CATALOGS.en, key, params);
 
   const severityLabel = (severity: Diagnostic['severity']): string => {
     if (severity === 'error') {
@@ -210,10 +202,389 @@ function mountApp(): void {
     document.title = `${t('app.name')} — ${t('app.tagline')}`;
   };
 
-  let activeTextarea: HTMLTextAreaElement | null = null;
-  let updateViewsFn: (() => void) | null = null;
-  let updateXPathViewFn: (() => void) | null = null;
-  let setCheckingStateFn: (() => void) | null = null;
+  // Build workbench DOM once so locale switches update text/attributes in-place without
+  // destroying editor state, Undo history, focus, or active dialogs.
+  const workbench = createEl('div', { className: 'workbench' });
+
+  const skipLink = createEl('a', {
+    className: 'skip-link',
+    attrs: { href: '#main-content' },
+  });
+  workbench.appendChild(skipLink);
+
+  const titleBar = createEl('header', { className: 'title-bar' });
+  const appTitle = createEl('h1', { className: 'app-title' });
+  titleBar.appendChild(appTitle);
+  workbench.appendChild(titleBar);
+
+  const toolbar = createEl('div', {
+    className: 'toolbar',
+    attrs: { role: 'toolbar' },
+  });
+
+  const actionsGroup = createEl('div', { className: 'toolbar-actions' });
+  const fileInput = createEl('input', {
+    className: 'hidden-file-input',
+    attrs: {
+      type: 'file',
+      accept: '.xml,.xsd,.xsl,.xslt,.sch,.rng,.svg,application/xml,text/xml',
+      tabindex: '-1',
+      'aria-hidden': 'true',
+    },
+  });
+
+  const openBtn = createEl('button', {
+    className: 'tb-btn',
+    attrs: { type: 'button' },
+  });
+  const saveBtn = createEl('button', {
+    className: 'tb-btn',
+    attrs: { id: 'save-button', type: 'button' },
+  });
+  const sampleBtn = createEl('button', {
+    className: 'tb-btn',
+    attrs: { type: 'button' },
+  });
+  const formatBtn = createEl('button', {
+    className: 'tb-btn',
+    attrs: { id: 'format-button', type: 'button' },
+  });
+  const checkBtn = createEl('button', {
+    className: 'tb-btn',
+    attrs: { type: 'button' },
+  });
+  const aboutBtn = createEl('button', {
+    className: 'tb-btn',
+    attrs: { id: 'about-button', type: 'button' },
+  });
+
+  actionsGroup.append(
+    fileInput,
+    openBtn,
+    saveBtn,
+    sampleBtn,
+    formatBtn,
+    checkBtn,
+    createEl('span', { className: 'toolbar-sep', attrs: { 'aria-hidden': 'true' } }),
+    aboutBtn,
+  );
+
+  const settingsGroup = createEl('div', {
+    className: 'toolbar-settings',
+    attrs: { role: 'group' },
+  });
+
+  const langGroup = createEl('div', { className: 'control-group' });
+  const langLabel = createEl('label', {
+    className: 'control-label',
+    attrs: { for: 'locale-select' },
+  });
+  const langSelect = createEl('select', {
+    className: 'tb-select',
+    attrs: { id: 'locale-select' },
+  });
+  for (const code of ['en', 'ja'] as const) {
+    const opt = createEl('option', {
+      text: code === 'en' ? 'English' : '日本語',
+      attrs: { value: code },
+    });
+    opt.selected = locale === code;
+    langSelect.appendChild(opt);
+  }
+  langGroup.append(langLabel, langSelect);
+
+  const themeGroup = createEl('div', { className: 'control-group' });
+  const themeLabel = createEl('label', {
+    className: 'control-label',
+    attrs: { for: 'theme-select' },
+  });
+  const themeSelect = createEl('select', {
+    className: 'tb-select',
+    attrs: { id: 'theme-select' },
+  });
+  const themeOptionElements = new Map<ThemeMode, HTMLOptionElement>();
+  const themeModes: readonly ThemeMode[] = ['light', 'dark', 'high-contrast'];
+  for (const mode of themeModes) {
+    const opt = createEl('option', { attrs: { value: mode } });
+    opt.selected = theme === mode;
+    themeOptionElements.set(mode, opt);
+    themeSelect.appendChild(opt);
+  }
+  themeGroup.append(themeLabel, themeSelect);
+
+  const encodingGroup = createEl('div', { className: 'control-group' });
+  const encodingLabel = createEl('label', {
+    className: 'control-label',
+    attrs: { for: 'encoding-select' },
+  });
+  const encodingSelect = createEl('select', {
+    className: 'tb-select',
+    attrs: { id: 'encoding-select' },
+  });
+  let encodingAutoOption: HTMLOptionElement | null = null;
+  for (const optionValue of ENCODING_OVERRIDE_OPTIONS) {
+    const opt = createEl('option', {
+      ...(optionValue === 'auto' ? {} : { text: optionValue }),
+      attrs: { value: optionValue },
+    });
+    opt.selected = encodingOverride === optionValue;
+    if (optionValue === 'auto') {
+      encodingAutoOption = opt;
+    }
+    encodingSelect.appendChild(opt);
+  }
+  encodingGroup.append(encodingLabel, encodingSelect);
+
+  const indentGroup = createEl('div', { className: 'control-group' });
+  const indentLabel = createEl('label', {
+    className: 'control-label',
+    attrs: { for: 'indent-select' },
+  });
+  const indentSelect = createEl('select', {
+    className: 'tb-select',
+    attrs: { id: 'indent-select' },
+  });
+  const indentOptionElements = new Map<IndentStyle, HTMLOptionElement>();
+  const indentStyles: readonly IndentStyle[] = ['spaces-2', 'spaces-4', 'tab'];
+  for (const styleValue of indentStyles) {
+    const opt = createEl('option', { attrs: { value: styleValue } });
+    opt.selected = indentStyle === styleValue;
+    indentOptionElements.set(styleValue, opt);
+    indentSelect.appendChild(opt);
+  }
+  indentGroup.append(indentLabel, indentSelect);
+
+  settingsGroup.append(encodingGroup, indentGroup, langGroup, themeGroup);
+  toolbar.append(actionsGroup, settingsGroup);
+  workbench.appendChild(toolbar);
+
+  const workspace = createEl('main', {
+    className: 'workspace',
+    attrs: { id: 'main-content', tabindex: '-1' },
+  });
+
+  const editorPane = createEl('section', {
+    className: 'pane',
+    attrs: { 'aria-labelledby': 'editor-pane-heading' },
+  });
+  const editorHeading = createEl('h2', {
+    className: 'pane-header',
+    attrs: { id: 'editor-pane-heading' },
+  });
+  editorPane.appendChild(editorHeading);
+
+  const textarea = createEl('textarea', {
+    className: 'xml-textarea',
+    attrs: {
+      id: 'xml-preview-input',
+      'aria-labelledby': 'editor-pane-heading',
+      spellcheck: 'false',
+    },
+  });
+  textarea.value = xmlDraft;
+  editorPane.appendChild(textarea);
+
+  const diagnosticsPane = createEl('section', {
+    className: 'pane',
+    attrs: { 'aria-labelledby': 'diagnostics-pane-heading' },
+  });
+  const diagHeading = createEl('h2', {
+    className: 'pane-header',
+    attrs: { id: 'diagnostics-pane-heading' },
+  });
+  diagnosticsPane.appendChild(diagHeading);
+
+  const diagnosticsBody = createEl('div', { className: 'diagnostics-body' });
+  const resultBox = createEl('div', {
+    className: 'diag-message',
+    attrs: { role: 'status', 'aria-live': 'polite' },
+  });
+  const diagListContainer = createEl('div', { className: 'diag-list-container' });
+  diagnosticsBody.append(resultBox, diagListContainer);
+  diagnosticsPane.appendChild(diagnosticsBody);
+
+  workspace.append(editorPane, diagnosticsPane);
+  workbench.appendChild(workspace);
+
+  const statusBar = createEl('footer', {
+    className: 'status-bar',
+    attrs: { role: 'contentinfo' },
+  });
+  const statusFields = createEl('div', { className: 'status-fields' });
+  const statusStateField = createEl('span', { className: 'status-field' });
+  const statusCountField = createEl('span', { className: 'status-field' });
+  const statusEncodingField = createEl('span', { className: 'status-field' });
+  const statusXpathField = createEl('span', {
+    className: 'status-field status-xpath',
+    attrs: { id: 'status-xpath' },
+  });
+  const statusLangField = createEl('span', { className: 'status-field' });
+  statusFields.append(
+    statusStateField,
+    statusCountField,
+    statusEncodingField,
+    statusXpathField,
+    statusLangField,
+  );
+
+  const statusPrivacyField = createEl('span', { className: 'status-field' });
+  statusBar.append(statusFields, statusPrivacyField);
+  workbench.appendChild(statusBar);
+
+  const aboutDialog = createEl('dialog', {
+    className: 'about-dialog',
+    attrs: { 'aria-labelledby': 'about-dialog-title' },
+  });
+  const aboutHeader = createEl('div', { className: 'about-header' });
+  const aboutTitle = createEl('h2', {
+    className: 'about-title',
+    attrs: { id: 'about-dialog-title' },
+  });
+  aboutHeader.appendChild(aboutTitle);
+  const aboutBody = createEl('div', { className: 'about-body' });
+  const aboutVersionP = createEl('p');
+  const aboutLicenseP = createEl('p');
+  const aboutPrivacyP = createEl('p');
+  const aboutNoticesTextNode = document.createTextNode('');
+  const aboutNoticesLink = createEl('a', {
+    className: 'about-link',
+    attrs: {
+      href: './THIRD_PARTY_NOTICES.md',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+    },
+  });
+  const noticesParagraph = createEl('p');
+  noticesParagraph.append(aboutNoticesTextNode, aboutNoticesLink);
+  aboutBody.append(aboutVersionP, aboutLicenseP, aboutPrivacyP, noticesParagraph);
+  const aboutFooter = createEl('div', { className: 'about-footer' });
+  const aboutCloseBtn = createEl('button', {
+    className: 'tb-btn',
+    attrs: { type: 'button' },
+  });
+  aboutFooter.appendChild(aboutCloseBtn);
+  aboutDialog.append(aboutHeader, aboutBody, aboutFooter);
+  workbench.appendChild(aboutDialog);
+
+  const saveDialog = createEl('dialog', {
+    className: 'about-dialog save-dialog',
+    attrs: { 'aria-labelledby': 'save-dialog-title' },
+  });
+  const saveForm = createEl('form');
+  const saveHeader = createEl('div', { className: 'about-header' });
+  const saveTitle = createEl('h2', {
+    className: 'about-title',
+    attrs: { id: 'save-dialog-title' },
+  });
+  saveHeader.appendChild(saveTitle);
+
+  const saveBody = createEl('div', { className: 'save-dialog-body' });
+
+  const saveLegacyNotice = createEl('p', {
+    className: 'save-notice',
+    attrs: { role: 'note' },
+  });
+  saveLegacyNotice.hidden = true;
+
+  const saveFilenameField = createEl('div', { className: 'save-field' });
+  const saveFilenameLabel = createEl('label', {
+    className: 'save-field-label',
+    attrs: { for: 'save-filename-input' },
+  });
+  const saveFilenameInput = createEl('input', {
+    className: 'save-input',
+    attrs: { id: 'save-filename-input', type: 'text', required: 'true' },
+  });
+  saveFilenameField.append(saveFilenameLabel, saveFilenameInput);
+
+  const saveEncodingField = createEl('div', { className: 'save-field' });
+  const saveEncodingLabel = createEl('label', {
+    className: 'save-field-label',
+    attrs: { for: 'save-encoding-select' },
+  });
+  const saveEncodingSelect = createEl('select', {
+    className: 'tb-select',
+    attrs: { id: 'save-encoding-select' },
+  });
+  for (const encOption of SAVE_ENCODING_OPTIONS) {
+    saveEncodingSelect.appendChild(
+      createEl('option', { text: encOption, attrs: { value: encOption } }),
+    );
+  }
+  saveEncodingField.append(saveEncodingLabel, saveEncodingSelect);
+
+  const saveBomGroup = createEl('div', { className: 'save-field' });
+  const saveBomRow = createEl('div', { className: 'save-checkbox-row' });
+  const saveBomCheckbox = createEl('input', {
+    attrs: { id: 'save-bom-checkbox', type: 'checkbox' },
+  });
+  const saveBomLabel = createEl('label', {
+    attrs: { for: 'save-bom-checkbox' },
+  });
+  saveBomRow.append(saveBomCheckbox, saveBomLabel);
+  const saveBomHint = createEl('p', { className: 'save-hint' });
+  saveBomHint.hidden = true;
+  saveBomGroup.append(saveBomRow, saveBomHint);
+
+  const saveEolField = createEl('div', { className: 'save-field' });
+  const saveEolLabel = createEl('label', {
+    className: 'save-field-label',
+    attrs: { for: 'save-eol-select' },
+  });
+  const saveEolSelect = createEl('select', {
+    className: 'tb-select',
+    attrs: { id: 'save-eol-select' },
+  });
+  const saveEolLfOption = createEl('option', { attrs: { value: 'LF' } });
+  const saveEolCrLfOption = createEl('option', { attrs: { value: 'CRLF' } });
+  saveEolSelect.append(saveEolLfOption, saveEolCrLfOption);
+  saveEolField.append(saveEolLabel, saveEolSelect);
+
+  const saveDeclBox = createEl('div', { className: 'save-decl-box' });
+  saveDeclBox.hidden = true;
+  const saveDeclRow = createEl('div', { className: 'save-checkbox-row' });
+  const saveDeclCheckbox = createEl('input', {
+    attrs: { id: 'save-update-decl-checkbox', type: 'checkbox' },
+  });
+  const saveDeclLabel = createEl('label', {
+    attrs: { for: 'save-update-decl-checkbox' },
+  });
+  saveDeclRow.append(saveDeclCheckbox, saveDeclLabel);
+  const saveDeclDetail = createEl('p', { className: 'save-hint' });
+  saveDeclBox.append(saveDeclRow, saveDeclDetail);
+
+  const saveErrorBox = createEl('p', {
+    className: 'save-error',
+    attrs: { role: 'alert' },
+  });
+  saveErrorBox.hidden = true;
+
+  saveBody.append(
+    saveLegacyNotice,
+    saveFilenameField,
+    saveEncodingField,
+    saveBomGroup,
+    saveEolField,
+    saveDeclBox,
+    saveErrorBox,
+  );
+
+  const saveFooter = createEl('div', { className: 'about-footer save-footer' });
+  const saveCancelBtn = createEl('button', {
+    className: 'tb-btn',
+    attrs: { type: 'button' },
+  });
+  const saveConfirmBtn = createEl('button', {
+    className: 'tb-btn',
+    attrs: { type: 'submit' },
+  });
+  saveFooter.append(saveCancelBtn, saveConfirmBtn);
+
+  saveForm.append(saveHeader, saveBody, saveFooter);
+  saveDialog.appendChild(saveForm);
+  workbench.appendChild(saveDialog);
+
+  root.replaceChildren(workbench);
 
   const clearDebounce = (): void => {
     if (debounceTimer !== null) {
@@ -229,12 +600,247 @@ function mountApp(): void {
     }
   };
 
+  const updateXPathStatusView = (): void => {
+    const effectiveStatus = resolveEffectiveXPathStatus(validationStatus, xpathStatus);
+    if (effectiveStatus.kind === 'path') {
+      statusXpathField.textContent = t('statusBar.xpath', {
+        value: effectiveStatus.breadcrumb,
+      });
+      statusXpathField.title = effectiveStatus.breadcrumb;
+    } else {
+      statusXpathField.textContent = t('statusBar.xpath', {
+        value: t('statusBar.xpathNone'),
+      });
+      statusXpathField.removeAttribute('title');
+    }
+  };
+
   const clearXPathStatus = (): void => {
     ++xpathEpoch;
     clearXPathDebounce();
     xpathWorkerClient.cancel();
     xpathStatus = { kind: 'none' };
-    updateXPathViewFn?.();
+    updateXPathStatusView();
+  };
+
+  const renderDiagnosticsList = (
+    diagnostics: readonly Diagnostic[],
+    truncatedDiagnostics: boolean,
+  ): void => {
+    diagListContainer.replaceChildren();
+    if (diagnostics.length === 0) {
+      return;
+    }
+
+    const list = createEl('ul', {
+      className: 'diag-list',
+      attrs: { 'aria-label': t('diagnostics.listLabel') },
+    });
+
+    for (const diag of diagnostics) {
+      const item = createEl('li', { className: `diag-item is-${diag.severity}` });
+      const jumpBtn = createEl('button', {
+        className: 'diag-item-btn',
+        attrs: { type: 'button' },
+      });
+
+      jumpBtn.appendChild(
+        createEl('span', {
+          className: `diag-severity is-${diag.severity}`,
+          text: severityLabel(diag.severity),
+        }),
+      );
+
+      if (diag.range) {
+        jumpBtn.appendChild(
+          createEl('span', {
+            className: 'diag-loc',
+            text: t('diagnostics.location', {
+              line: diag.range.line,
+              column: diag.range.column,
+            }),
+          }),
+        );
+      }
+
+      const localizedMsg = formatMessage(
+        CATALOGS[locale],
+        CATALOGS.en,
+        diag.messageKey,
+        diag.params,
+      );
+      jumpBtn.appendChild(createEl('span', { className: 'diag-text', text: localizedMsg }));
+
+      jumpBtn.addEventListener('click', () => {
+        const rawOffset = diag.range?.offset ?? 0;
+        const clampedOffset = Math.min(Math.max(0, rawOffset), textarea.value.length);
+        textarea.focus();
+        textarea.setSelectionRange(clampedOffset, clampedOffset);
+        scheduleXPathLookup(0);
+      });
+
+      item.appendChild(jumpBtn);
+
+      const rawDetail = diag.params?.detail;
+      if (typeof rawDetail === 'string' && rawDetail.length > 0) {
+        const details = createEl('details', { className: 'diag-raw-details' });
+        details.append(
+          createEl('summary', {
+            className: 'diag-raw-summary',
+            text: t('diagnostics.rawDetail'),
+          }),
+          createEl('code', { className: 'diag-raw-code', text: rawDetail }),
+        );
+        item.appendChild(details);
+      }
+
+      list.appendChild(item);
+    }
+
+    diagListContainer.appendChild(list);
+
+    if (truncatedDiagnostics) {
+      diagListContainer.appendChild(
+        createEl('p', {
+          className: 'diag-truncated',
+          text: t('diagnostics.truncated', { shown: diagnostics.length }),
+        }),
+      );
+    }
+  };
+
+  const updateStatusViews = (): void => {
+    resultBox.classList.remove('is-valid', 'is-invalid', 'has-warnings');
+    diagListContainer.replaceChildren();
+
+    const encodingValue =
+      loadedEncodingInfo === null
+        ? t('statusBar.encodingNone')
+        : loadedEncodingInfo.hasBom
+          ? t('statusBar.encodingWithBom', { encoding: loadedEncodingInfo.encoding })
+          : loadedEncodingInfo.encoding;
+    statusEncodingField.textContent = t('statusBar.encoding', { value: encodingValue });
+
+    const viewModel = buildValidationViewModel(validationStatus);
+    for (const cls of viewModel.resultClasses) {
+      resultBox.classList.add(cls);
+    }
+    resultBox.textContent = t(viewModel.resultMessageKey, viewModel.resultMessageParams);
+    statusStateField.textContent = t(viewModel.statusStateKey, viewModel.statusStateParams);
+    statusCountField.textContent = t('statusBar.elements', { count: viewModel.elementCount });
+    renderDiagnosticsList(viewModel.diagnostics, viewModel.truncatedDiagnostics);
+    updateXPathStatusView();
+  };
+
+  const setCheckingState = (): void => {
+    statusStateField.textContent = t('statusBar.checking');
+  };
+
+  const updateSaveDeclarationLocaleText = (): void => {
+    if (activeSaveDeclCheck === null || !activeSaveDeclCheck.needsUpdate) {
+      return;
+    }
+    saveDeclLabel.textContent = t('save.updateDecl', { encoding: activeSaveSelectedEncoding });
+    saveDeclDetail.textContent =
+      activeSaveDeclCheck.declaredEncoding !== undefined
+        ? t('save.updateDeclDetail', { declared: activeSaveDeclCheck.declaredEncoding })
+        : t('save.addDeclEncodingDetail');
+  };
+
+  const updateSaveDynamicLocaleText = (): void => {
+    if (activeSaveLegacyEncoding !== undefined) {
+      saveLegacyNotice.textContent = t('save.legacyNotice', {
+        encoding: activeSaveLegacyEncoding,
+      });
+    }
+    updateSaveDeclarationLocaleText();
+    if (activeSaveLoneSurrogate !== null) {
+      saveErrorBox.textContent = t('save.loneSurrogateError', {
+        codeUnit: formatCodeUnitHex(activeSaveLoneSurrogate.codeUnit),
+        line: activeSaveLoneSurrogate.line,
+        column: activeSaveLoneSurrogate.column,
+        offset: activeSaveLoneSurrogate.offset,
+      });
+    }
+  };
+
+  const applyLocale = (): void => {
+    applyDocumentAttributes();
+
+    skipLink.textContent = t('app.skipToMain');
+    appTitle.textContent = t('app.name');
+
+    toolbar.setAttribute('aria-label', t('toolbar.label'));
+    openBtn.textContent = t('toolbar.openFile');
+    saveBtn.textContent = t('toolbar.saveAs');
+    sampleBtn.textContent = t('toolbar.loadSample');
+    formatBtn.textContent = t('toolbar.format');
+    checkBtn.textContent = t('toolbar.checkWellFormedness');
+    aboutBtn.textContent = t('toolbar.about');
+
+    settingsGroup.setAttribute('aria-label', t('nav.settingsLabel'));
+    encodingLabel.textContent = t('nav.fileEncoding');
+    if (encodingAutoOption !== null) {
+      encodingAutoOption.textContent = t('encoding.auto');
+    }
+    indentLabel.textContent = t('nav.indentStyle');
+    const spaces2Option = indentOptionElements.get('spaces-2');
+    if (spaces2Option) {
+      spaces2Option.textContent = t('indent.spaces2');
+    }
+    const spaces4Option = indentOptionElements.get('spaces-4');
+    if (spaces4Option) {
+      spaces4Option.textContent = t('indent.spaces4');
+    }
+    const tabOption = indentOptionElements.get('tab');
+    if (tabOption) {
+      tabOption.textContent = t('indent.tab');
+    }
+
+    langLabel.textContent = t('nav.language');
+    themeLabel.textContent = t('nav.theme');
+    const lightOption = themeOptionElements.get('light');
+    if (lightOption) {
+      lightOption.textContent = t('theme.light');
+    }
+    const darkOption = themeOptionElements.get('dark');
+    if (darkOption) {
+      darkOption.textContent = t('theme.dark');
+    }
+    const highContrastOption = themeOptionElements.get('high-contrast');
+    if (highContrastOption) {
+      highContrastOption.textContent = t('theme.highContrast');
+    }
+
+    editorHeading.textContent = t('pane.editorHeading');
+    textarea.placeholder = t('preview.placeholder');
+    diagHeading.textContent = t('pane.diagnosticsHeading');
+
+    statusBar.setAttribute('aria-label', t('statusBar.label'));
+    statusLangField.textContent = t('statusBar.language');
+    statusPrivacyField.textContent = t('statusBar.localOnly');
+
+    aboutTitle.textContent = t('about.title');
+    aboutVersionP.textContent = t('about.version', { version: APP_VERSION });
+    aboutLicenseP.textContent = t('about.license');
+    aboutPrivacyP.textContent = t('about.privacy');
+    aboutNoticesTextNode.data = t('about.noticesLabel');
+    aboutNoticesLink.textContent = t('about.noticesLink');
+    aboutCloseBtn.textContent = t('about.close');
+
+    saveTitle.textContent = t('save.title');
+    saveFilenameLabel.textContent = t('save.filename');
+    saveEncodingLabel.textContent = t('save.encoding');
+    saveBomLabel.textContent = t('save.bomLabel');
+    saveBomHint.textContent = t('save.bomRequiredHint');
+    saveEolLabel.textContent = t('save.lineEnding');
+    saveEolLfOption.textContent = t('save.lineEndingLf');
+    saveEolCrLfOption.textContent = t('save.lineEndingCrLf');
+    saveCancelBtn.textContent = t('save.cancel');
+    saveConfirmBtn.textContent = t('save.confirm');
+    updateSaveDynamicLocaleText();
+
+    updateStatusViews();
   };
 
   const runXPathLookup = async (xmlText: string, cursorOffset: number): Promise<void> => {
@@ -248,7 +854,7 @@ function mountApp(): void {
     ) {
       xpathWorkerClient.cancel();
       xpathStatus = { kind: 'none' };
-      updateXPathViewFn?.();
+      updateXPathStatusView();
       return;
     }
 
@@ -260,29 +866,27 @@ function mountApp(): void {
         currentEpoch: xpathEpoch,
         sentText: xmlText,
         sentOffset: cursorOffset,
-        currentTextareaValue: activeTextarea?.value ?? xmlDraft,
-        currentSelectionStart: activeTextarea?.selectionStart ?? 0,
+        currentTextareaValue: textarea.value,
+        currentSelectionStart: textarea.selectionStart ?? 0,
       })
     ) {
       return;
     }
 
     xpathStatus = xpathStatusFromWorkerOutcome(outcome);
-    updateXPathViewFn?.();
+    updateXPathStatusView();
   };
 
   const scheduleXPathLookup = (delayMs: number = XPATH_DEBOUNCE_MS): void => {
     clearXPathDebounce();
     xpathWorkerClient.cancel();
     if (delayMs <= 0) {
-      const target = activeTextarea;
-      void runXPathLookup(target?.value ?? xmlDraft, target?.selectionStart ?? 0);
+      void runXPathLookup(textarea.value, textarea.selectionStart ?? 0);
       return;
     }
     xpathDebounceTimer = setTimeout(() => {
       xpathDebounceTimer = null;
-      const target = activeTextarea;
-      void runXPathLookup(target?.value ?? xmlDraft, target?.selectionStart ?? 0);
+      void runXPathLookup(textarea.value, textarea.selectionStart ?? 0);
     }, delayMs);
   };
 
@@ -298,18 +902,18 @@ function mountApp(): void {
     if (!trimmed) {
       workerClient.cancel();
       validationStatus = { kind: 'empty' };
-      updateViewsFn?.();
+      updateStatusViews();
       return;
     }
 
     if (utf8ByteLength(xmlText) > MAX_PREVIEW_BYTES) {
       workerClient.cancel();
       validationStatus = { kind: 'too-large', limitMb: 1 };
-      updateViewsFn?.();
+      updateStatusViews();
       return;
     }
 
-    setCheckingStateFn?.();
+    setCheckingState();
     const workerOptions =
       checkOptions?.assumedEncoding !== undefined
         ? { assumedEncoding: checkOptions.assumedEncoding }
@@ -334,24 +938,20 @@ function mountApp(): void {
     } else {
       validationStatus = { kind: 'worker-error', detail: outcome.message };
     }
-    updateViewsFn?.();
+    updateStatusViews();
   };
 
-  const applyDecodedBytesResult = async (
-    bytes: Uint8Array,
-    decoded: DecodeXmlResult,
-  ): Promise<void> => {
+  const applyDecodedBytesResult = async (decoded: DecodeXmlResult): Promise<void> => {
     if (!decoded.ok) {
       ++checkEpoch;
       workerClient.cancel();
       xmlDraft = '';
-      if (activeTextarea) {
-        activeTextarea.value = '';
-      }
+      textarea.value = '';
       loadedEncodingInfo = { encoding: decoded.encoding, hasBom: decoded.hasBom };
       loadedLineEnding = 'LF';
-      lastAssumedEncoding = undefined;
-      lastPreDiagnostics = [];
+      documentEditState = transitionDocumentEditState(documentEditState, {
+        type: 'file-decode-cleared',
+      });
       validationStatus = {
         kind: 'decode-error',
         failureReason: decoded.failureReason,
@@ -359,7 +959,7 @@ function mountApp(): void {
         diagnostics: decoded.diagnostics,
       };
       clearXPathStatus();
-      updateViewsFn?.();
+      updateStatusViews();
       return;
     }
 
@@ -370,27 +970,27 @@ function mountApp(): void {
       ++checkEpoch;
       workerClient.cancel();
       xmlDraft = '';
-      if (activeTextarea) {
-        activeTextarea.value = '';
-      }
+      textarea.value = '';
       loadedEncodingInfo = null;
       loadedLineEnding = 'LF';
-      lastAssumedEncoding = undefined;
-      lastPreDiagnostics = [];
+      documentEditState = transitionDocumentEditState(documentEditState, {
+        type: 'file-decode-cleared',
+      });
       validationStatus = { kind: 'too-large', limitMb: 1 };
       clearXPathStatus();
-      updateViewsFn?.();
+      updateStatusViews();
       return;
     }
 
     loadedLineEnding = normalizedEditor.lineEnding;
     xmlDraft = normalizedEditor.text;
-    if (activeTextarea) {
-      activeTextarea.value = xmlDraft;
-    }
+    textarea.value = xmlDraft;
     loadedEncodingInfo = { encoding: decoded.encoding, hasBom: decoded.hasBom };
-    lastAssumedEncoding = decoded.assumedEncoding;
-    lastPreDiagnostics = decoded.diagnostics;
+    documentEditState = transitionDocumentEditState(documentEditState, {
+      type: 'file-loaded',
+      assumedEncoding: decoded.assumedEncoding,
+      preDiagnostics: decoded.diagnostics,
+    });
     clearXPathStatus();
     await runWorkerCheck(xmlDraft, {
       assumedEncoding: decoded.assumedEncoding,
@@ -401,17 +1001,17 @@ function mountApp(): void {
   const decodeAndCheckLoadedBytes = async (bytes: Uint8Array): Promise<void> => {
     clearDebounce();
     const decoded = decodeXmlBytes(bytes, encodingOverride);
-    await applyDecodedBytesResult(bytes, decoded);
+    await applyDecodedBytesResult(decoded);
   };
 
   const resetLoadedFileState = (): void => {
     loadedFileBytes = null;
     loadedFileName = null;
     loadedLineEnding = 'LF';
-    isModifiedSinceLoad = false;
     loadedEncodingInfo = null;
-    lastAssumedEncoding = undefined;
-    lastPreDiagnostics = [];
+    documentEditState = transitionDocumentEditState(documentEditState, {
+      type: 'sample-loaded',
+    });
   };
 
   const openXmlFile = async (file: File): Promise<void> => {
@@ -427,7 +1027,7 @@ function mountApp(): void {
       resetLoadedFileState();
       validationStatus = { kind: 'too-large', limitMb: 1 };
       clearXPathStatus();
-      updateViewsFn?.();
+      updateStatusViews();
       return;
     }
 
@@ -436,1083 +1036,428 @@ function mountApp(): void {
       resetLoadedFileState();
       validationStatus = { kind: 'read-error', detail: outcome.detail };
       clearXPathStatus();
-      updateViewsFn?.();
+      updateStatusViews();
       return;
     }
 
     loadedFileBytes = outcome.bytes;
     loadedFileName = file.name;
-    isModifiedSinceLoad = false;
-    await applyDecodedBytesResult(outcome.bytes, outcome.decoded);
+    await applyDecodedBytesResult(outcome.decoded);
   };
 
-  const render = (): void => {
-    applyDocumentAttributes();
-    root.replaceChildren();
+  openBtn.addEventListener('click', () => {
+    fileInput.value = '';
+    fileInput.click();
+  });
 
-    const workbench = createEl('div', { className: 'workbench' });
-
-    const skipLink = createEl('a', {
-      className: 'skip-link',
-      text: t('app.skipToMain'),
-      attrs: { href: '#main-content' },
-    });
-    workbench.appendChild(skipLink);
-
-    const titleBar = createEl('header', { className: 'title-bar' });
-    titleBar.appendChild(createEl('h1', { className: 'app-title', text: t('app.name') }));
-    workbench.appendChild(titleBar);
-
-    const toolbar = createEl('div', {
-      className: 'toolbar',
-      attrs: { role: 'toolbar', 'aria-label': t('toolbar.label') },
-    });
-
-    const actionsGroup = createEl('div', { className: 'toolbar-actions' });
-    const fileInput = createEl('input', {
-      className: 'hidden-file-input',
-      attrs: {
-        type: 'file',
-        accept: '.xml,.xsd,.xsl,.xslt,.sch,.rng,.svg,application/xml,text/xml',
-        tabindex: '-1',
-        'aria-hidden': 'true',
-      },
-    });
-
-    const openBtn = createEl('button', {
-      className: 'tb-btn',
-      text: t('toolbar.openFile'),
-      attrs: { type: 'button' },
-    });
-    openBtn.addEventListener('click', () => {
-      fileInput.value = '';
-      fileInput.click();
-    });
-
-    const saveBtn = createEl('button', {
-      className: 'tb-btn',
-      text: t('toolbar.saveAs'),
-      attrs: { id: 'save-button', type: 'button' },
-    });
-
-    const sampleBtn = createEl('button', {
-      className: 'tb-btn',
-      text: t('toolbar.loadSample'),
-      attrs: { type: 'button' },
-    });
-
-    const formatBtn = createEl('button', {
-      className: 'tb-btn',
-      text: t('toolbar.format'),
-      attrs: { id: 'format-button', type: 'button' },
-    });
-
-    const checkBtn = createEl('button', {
-      className: 'tb-btn',
-      text: t('toolbar.checkWellFormedness'),
-      attrs: { type: 'button' },
-    });
-
-    const aboutBtn = createEl('button', {
-      className: 'tb-btn',
-      text: t('toolbar.about'),
-      attrs: { id: 'about-button', type: 'button' },
-    });
-
-    actionsGroup.append(
-      fileInput,
-      openBtn,
-      saveBtn,
-      sampleBtn,
-      formatBtn,
-      checkBtn,
-      createEl('span', { className: 'toolbar-sep', attrs: { 'aria-hidden': 'true' } }),
-      aboutBtn,
-    );
-
-    const settingsGroup = createEl('div', {
-      className: 'toolbar-settings',
-      attrs: { role: 'group', 'aria-label': t('nav.settingsLabel') },
-    });
-
-    const langGroup = createEl('div', { className: 'control-group' });
-    const langLabel = createEl('label', {
-      className: 'control-label',
-      text: t('nav.language'),
-      attrs: { for: 'locale-select' },
-    });
-    const langSelect = createEl('select', {
-      className: 'tb-select',
-      attrs: { id: 'locale-select' },
-    });
-    for (const code of ['en', 'ja'] as const) {
-      const opt = createEl('option', {
-        text: code === 'en' ? 'English' : '日本語',
-        attrs: { value: code },
-      });
-      opt.selected = locale === code;
-      langSelect.appendChild(opt);
+  langSelect.addEventListener('change', () => {
+    const next = langSelect.value === 'ja' ? 'ja' : 'en';
+    locale = next;
+    try {
+      window.localStorage.setItem(STORAGE_LANG_KEY, next);
+    } catch {
+      // Ignore storage access restrictions.
     }
-    langSelect.addEventListener('change', () => {
-      const next = langSelect.value === 'ja' ? 'ja' : 'en';
-      locale = next;
+    applyLocale();
+  });
+
+  themeSelect.addEventListener('change', () => {
+    const val = themeSelect.value;
+    if (val === 'light' || val === 'dark' || val === 'high-contrast') {
+      theme = val;
       try {
-        window.localStorage.setItem(STORAGE_LANG_KEY, next);
+        window.localStorage.setItem(STORAGE_THEME_KEY, val);
       } catch {
         // Ignore storage access restrictions.
       }
-      render();
-      document.getElementById('locale-select')?.focus();
-    });
-    langGroup.append(langLabel, langSelect);
-
-    const themeGroup = createEl('div', { className: 'control-group' });
-    const themeLabel = createEl('label', {
-      className: 'control-label',
-      text: t('nav.theme'),
-      attrs: { for: 'theme-select' },
-    });
-    const themeSelect = createEl('select', {
-      className: 'tb-select',
-      attrs: { id: 'theme-select' },
-    });
-    const themes: ReadonlyArray<readonly [ThemeMode, string]> = [
-      ['light', t('theme.light')],
-      ['dark', t('theme.dark')],
-      ['high-contrast', t('theme.highContrast')],
-    ];
-    for (const [mode, label] of themes) {
-      const opt = createEl('option', {
-        text: label,
-        attrs: { value: mode },
-      });
-      opt.selected = theme === mode;
-      themeSelect.appendChild(opt);
+      applyDocumentAttributes();
     }
-    themeSelect.addEventListener('change', () => {
-      const val = themeSelect.value;
-      if (val === 'light' || val === 'dark' || val === 'high-contrast') {
-        theme = val;
-        try {
-          window.localStorage.setItem(STORAGE_THEME_KEY, val);
-        } catch {
-          // Ignore storage access restrictions.
-        }
-        applyDocumentAttributes();
-      }
-    });
-    themeGroup.append(themeLabel, themeSelect);
+  });
 
-    const encodingGroup = createEl('div', { className: 'control-group' });
-    const encodingLabel = createEl('label', {
-      className: 'control-label',
-      text: t('nav.fileEncoding'),
-      attrs: { for: 'encoding-select' },
-    });
-    const encodingSelect = createEl('select', {
-      className: 'tb-select',
-      attrs: { id: 'encoding-select' },
-    });
-    for (const optionValue of ENCODING_OVERRIDE_OPTIONS) {
-      const opt = createEl('option', {
-        text: optionValue === 'auto' ? t('encoding.auto') : optionValue,
-        attrs: { value: optionValue },
-      });
-      opt.selected = encodingOverride === optionValue;
-      encodingSelect.appendChild(opt);
+  encodingSelect.addEventListener('change', () => {
+    if (isEncodingOverride(encodingSelect.value)) {
+      encodingOverride = encodingSelect.value;
+      if (loadedFileBytes !== null && !documentEditState.isModifiedSinceLoad) {
+        void decodeAndCheckLoadedBytes(loadedFileBytes);
+      }
     }
-    encodingSelect.addEventListener('change', () => {
-      if (isEncodingOverride(encodingSelect.value)) {
-        encodingOverride = encodingSelect.value;
-        if (loadedFileBytes !== null && !isModifiedSinceLoad) {
-          void decodeAndCheckLoadedBytes(loadedFileBytes);
-        }
-      }
-    });
-    encodingGroup.append(encodingLabel, encodingSelect);
+  });
 
-    const indentGroup = createEl('div', { className: 'control-group' });
-    const indentLabel = createEl('label', {
-      className: 'control-label',
-      text: t('nav.indentStyle'),
-      attrs: { for: 'indent-select' },
-    });
-    const indentSelect = createEl('select', {
-      className: 'tb-select',
-      attrs: { id: 'indent-select' },
-    });
-    const indentOptions: ReadonlyArray<readonly [IndentStyle, string]> = [
-      ['spaces-2', t('indent.spaces2')],
-      ['spaces-4', t('indent.spaces4')],
-      ['tab', t('indent.tab')],
-    ];
-    for (const [styleValue, label] of indentOptions) {
-      const opt = createEl('option', {
-        text: label,
-        attrs: { value: styleValue },
-      });
-      opt.selected = indentStyle === styleValue;
-      indentSelect.appendChild(opt);
+  indentSelect.addEventListener('change', () => {
+    if (isIndentStyle(indentSelect.value)) {
+      indentStyle = indentSelect.value;
     }
-    indentSelect.addEventListener('change', () => {
-      if (isIndentStyle(indentSelect.value)) {
-        indentStyle = indentSelect.value;
-      }
+  });
+
+  textarea.addEventListener('input', () => {
+    xmlDraft = textarea.value;
+    documentEditState = transitionDocumentEditState(documentEditState, {
+      type: 'user-edited',
     });
-    indentGroup.append(indentLabel, indentSelect);
+    clearDebounce();
+    workerClient.cancel();
+    const scheduledText = xmlDraft;
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      void runWorkerCheck(scheduledText);
+    }, INPUT_DEBOUNCE_MS);
+    scheduleXPathLookup();
+  });
 
-    settingsGroup.append(encodingGroup, indentGroup, langGroup, themeGroup);
-    toolbar.append(actionsGroup, settingsGroup);
-    workbench.appendChild(toolbar);
-
-    const workspace = createEl('main', {
-      className: 'workspace',
-      attrs: { id: 'main-content', tabindex: '-1' },
-    });
-
-    const editorPane = createEl('section', {
-      className: 'pane',
-      attrs: { 'aria-labelledby': 'editor-pane-heading' },
-    });
-    editorPane.appendChild(
-      createEl('h2', {
-        className: 'pane-header',
-        text: t('pane.editorHeading'),
-        attrs: { id: 'editor-pane-heading' },
-      }),
-    );
-
-    const textarea = createEl('textarea', {
-      className: 'xml-textarea',
-      attrs: {
-        id: 'xml-preview-input',
-        'aria-labelledby': 'editor-pane-heading',
-        placeholder: t('preview.placeholder'),
-        spellcheck: 'false',
-      },
-    });
-    textarea.value = xmlDraft;
-    activeTextarea = textarea;
-
-    textarea.addEventListener('input', () => {
-      xmlDraft = textarea.value;
-      isModifiedSinceLoad = true;
-      lastAssumedEncoding = undefined;
-      lastPreDiagnostics = [];
-      clearDebounce();
-      workerClient.cancel();
-      const scheduledText = xmlDraft;
-      debounceTimer = setTimeout(() => {
-        debounceTimer = null;
-        void runWorkerCheck(scheduledText);
-      }, INPUT_DEBOUNCE_MS);
+  for (const cursorEvent of ['keyup', 'mouseup', 'focus', 'select'] as const) {
+    textarea.addEventListener(cursorEvent, () => {
       scheduleXPathLookup();
     });
+  }
 
-    for (const cursorEvent of ['keyup', 'mouseup', 'focus', 'select'] as const) {
-      textarea.addEventListener(cursorEvent, () => {
-        scheduleXPathLookup();
-      });
+  textarea.addEventListener('dragenter', (event) => {
+    if (!isFileDataTransfer(event.dataTransfer)) {
+      return;
     }
+    event.preventDefault();
+    textarea.classList.add('is-drag-over');
+  });
 
-    textarea.addEventListener('dragenter', (event) => {
-      if (!isFileDataTransfer(event.dataTransfer)) {
-        return;
-      }
-      event.preventDefault();
-      textarea.classList.add('is-drag-over');
-    });
-
-    textarea.addEventListener('dragover', (event) => {
-      if (!isFileDataTransfer(event.dataTransfer)) {
-        return;
-      }
-      event.preventDefault();
-      if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = 'copy';
-      }
-      textarea.classList.add('is-drag-over');
-    });
-
-    textarea.addEventListener('dragleave', () => {
-      textarea.classList.remove('is-drag-over');
-    });
-
-    textarea.addEventListener('drop', (event) => {
-      textarea.classList.remove('is-drag-over');
-      const droppedFile = pickFirstDroppedFile(event.dataTransfer);
-      if (!isFileDataTransfer(event.dataTransfer)) {
-        return;
-      }
-      event.preventDefault();
-      if (droppedFile) {
-        void openXmlFile(droppedFile);
-      }
-    });
-    editorPane.appendChild(textarea);
-
-    const diagnosticsPane = createEl('section', {
-      className: 'pane',
-      attrs: { 'aria-labelledby': 'diagnostics-pane-heading' },
-    });
-    diagnosticsPane.appendChild(
-      createEl('h2', {
-        className: 'pane-header',
-        text: t('pane.diagnosticsHeading'),
-        attrs: { id: 'diagnostics-pane-heading' },
-      }),
-    );
-
-    const diagnosticsBody = createEl('div', { className: 'diagnostics-body' });
-    const resultBox = createEl('div', {
-      className: 'diag-message',
-      attrs: { role: 'status', 'aria-live': 'polite' },
-    });
-    const diagListContainer = createEl('div', { className: 'diag-list-container' });
-    diagnosticsBody.append(resultBox, diagListContainer);
-    diagnosticsPane.appendChild(diagnosticsBody);
-
-    workspace.append(editorPane, diagnosticsPane);
-    workbench.appendChild(workspace);
-
-    const statusBar = createEl('footer', {
-      className: 'status-bar',
-      attrs: { role: 'contentinfo', 'aria-label': t('statusBar.label') },
-    });
-    const statusFields = createEl('div', { className: 'status-fields' });
-    const statusStateField = createEl('span', { className: 'status-field' });
-    const statusCountField = createEl('span', { className: 'status-field' });
-    const statusEncodingField = createEl('span', { className: 'status-field' });
-    const statusXpathField = createEl('span', {
-      className: 'status-field status-xpath',
-      attrs: { id: 'status-xpath' },
-    });
-    const statusLangField = createEl('span', {
-      className: 'status-field',
-      text: t('statusBar.language'),
-    });
-    statusFields.append(
-      statusStateField,
-      statusCountField,
-      statusEncodingField,
-      statusXpathField,
-      statusLangField,
-    );
-
-    const statusPrivacyField = createEl('span', {
-      className: 'status-field',
-      text: t('statusBar.localOnly'),
-    });
-    statusBar.append(statusFields, statusPrivacyField);
-    workbench.appendChild(statusBar);
-
-    const aboutDialog = createEl('dialog', {
-      className: 'about-dialog',
-      attrs: { 'aria-labelledby': 'about-dialog-title' },
-    });
-    const aboutHeader = createEl('div', { className: 'about-header' });
-    aboutHeader.appendChild(
-      createEl('h2', {
-        className: 'about-title',
-        text: t('about.title'),
-        attrs: { id: 'about-dialog-title' },
-      }),
-    );
-    const aboutBody = createEl('div', { className: 'about-body' });
-    const noticesParagraph = createEl('p', { text: t('about.noticesLabel') });
-    noticesParagraph.appendChild(
-      createEl('a', {
-        className: 'about-link',
-        text: t('about.noticesLink'),
-        attrs: {
-          href: './THIRD_PARTY_NOTICES.md',
-          target: '_blank',
-          rel: 'noopener noreferrer',
-        },
-      }),
-    );
-    aboutBody.append(
-      createEl('p', { text: t('about.version', { version: APP_VERSION }) }),
-      createEl('p', { text: t('about.license') }),
-      createEl('p', { text: t('about.privacy') }),
-      noticesParagraph,
-    );
-    const aboutFooter = createEl('div', { className: 'about-footer' });
-    const aboutCloseBtn = createEl('button', {
-      className: 'tb-btn',
-      text: t('about.close'),
-      attrs: { type: 'button' },
-    });
-    aboutFooter.appendChild(aboutCloseBtn);
-    aboutDialog.append(aboutHeader, aboutBody, aboutFooter);
-    workbench.appendChild(aboutDialog);
-
-    const saveDialog = createEl('dialog', {
-      className: 'about-dialog save-dialog',
-      attrs: { 'aria-labelledby': 'save-dialog-title' },
-    });
-    const saveForm = createEl('form');
-    const saveHeader = createEl('div', { className: 'about-header' });
-    saveHeader.appendChild(
-      createEl('h2', {
-        className: 'about-title',
-        text: t('save.title'),
-        attrs: { id: 'save-dialog-title' },
-      }),
-    );
-
-    const saveBody = createEl('div', { className: 'save-dialog-body' });
-
-    const saveLegacyNotice = createEl('p', {
-      className: 'save-notice',
-      attrs: { role: 'note' },
-    });
-    saveLegacyNotice.hidden = true;
-
-    const saveFilenameField = createEl('div', { className: 'save-field' });
-    saveFilenameField.appendChild(
-      createEl('label', {
-        className: 'save-field-label',
-        text: t('save.filename'),
-        attrs: { for: 'save-filename-input' },
-      }),
-    );
-    const saveFilenameInput = createEl('input', {
-      className: 'save-input',
-      attrs: { id: 'save-filename-input', type: 'text', required: 'true' },
-    });
-    saveFilenameField.appendChild(saveFilenameInput);
-
-    const saveEncodingField = createEl('div', { className: 'save-field' });
-    saveEncodingField.appendChild(
-      createEl('label', {
-        className: 'save-field-label',
-        text: t('save.encoding'),
-        attrs: { for: 'save-encoding-select' },
-      }),
-    );
-    const saveEncodingSelect = createEl('select', {
-      className: 'tb-select',
-      attrs: { id: 'save-encoding-select' },
-    });
-    for (const encOption of SAVE_ENCODING_OPTIONS) {
-      saveEncodingSelect.appendChild(
-        createEl('option', { text: encOption, attrs: { value: encOption } }),
-      );
+  textarea.addEventListener('dragover', (event) => {
+    if (!isFileDataTransfer(event.dataTransfer)) {
+      return;
     }
-    saveEncodingField.appendChild(saveEncodingSelect);
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
+    textarea.classList.add('is-drag-over');
+  });
 
-    const saveBomGroup = createEl('div', { className: 'save-field' });
-    const saveBomRow = createEl('div', { className: 'save-checkbox-row' });
-    const saveBomCheckbox = createEl('input', {
-      attrs: { id: 'save-bom-checkbox', type: 'checkbox' },
-    });
-    const saveBomLabel = createEl('label', {
-      text: t('save.bomLabel'),
-      attrs: { for: 'save-bom-checkbox' },
-    });
-    saveBomRow.append(saveBomCheckbox, saveBomLabel);
-    const saveBomHint = createEl('p', {
-      className: 'save-hint',
-      text: t('save.bomRequiredHint'),
-    });
-    saveBomHint.hidden = true;
-    saveBomGroup.append(saveBomRow, saveBomHint);
+  textarea.addEventListener('dragleave', () => {
+    textarea.classList.remove('is-drag-over');
+  });
 
-    const saveEolField = createEl('div', { className: 'save-field' });
-    saveEolField.appendChild(
-      createEl('label', {
-        className: 'save-field-label',
-        text: t('save.lineEnding'),
-        attrs: { for: 'save-eol-select' },
-      }),
-    );
-    const saveEolSelect = createEl('select', {
-      className: 'tb-select',
-      attrs: { id: 'save-eol-select' },
-    });
-    saveEolSelect.append(
-      createEl('option', { text: t('save.lineEndingLf'), attrs: { value: 'LF' } }),
-      createEl('option', { text: t('save.lineEndingCrLf'), attrs: { value: 'CRLF' } }),
-    );
-    saveEolField.appendChild(saveEolSelect);
+  textarea.addEventListener('drop', (event) => {
+    textarea.classList.remove('is-drag-over');
+    const droppedFile = pickFirstDroppedFile(event.dataTransfer);
+    if (!isFileDataTransfer(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    if (droppedFile) {
+      void openXmlFile(droppedFile);
+    }
+  });
 
-    const saveDeclBox = createEl('div', { className: 'save-decl-box' });
-    saveDeclBox.hidden = true;
-    const saveDeclRow = createEl('div', { className: 'save-checkbox-row' });
-    const saveDeclCheckbox = createEl('input', {
-      attrs: { id: 'save-update-decl-checkbox', type: 'checkbox' },
-    });
-    const saveDeclLabel = createEl('label', {
-      attrs: { for: 'save-update-decl-checkbox' },
-    });
-    saveDeclRow.append(saveDeclCheckbox, saveDeclLabel);
-    const saveDeclDetail = createEl('p', { className: 'save-hint' });
-    saveDeclBox.append(saveDeclRow, saveDeclDetail);
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files?.[0];
+    if (!file) {
+      return;
+    }
+    await openXmlFile(file);
+  });
 
-    const saveErrorBox = createEl('p', {
-      className: 'save-error',
-      attrs: { role: 'alert' },
-    });
-    saveErrorBox.hidden = true;
+  sampleBtn.addEventListener('click', () => {
+    clearDebounce();
+    resetLoadedFileState();
+    xmlDraft = t('preview.sampleXml');
+    textarea.value = xmlDraft;
+    clearXPathStatus();
+    void runWorkerCheck(xmlDraft, { assumedEncoding: 'UTF-8' });
+  });
 
-    saveBody.append(
-      saveLegacyNotice,
-      saveFilenameField,
-      saveEncodingField,
-      saveBomGroup,
-      saveEolField,
-      saveDeclBox,
-      saveErrorBox,
-    );
+  formatBtn.addEventListener('click', async () => {
+    clearDebounce();
+    const sentText = textarea.value;
+    xmlDraft = sentText;
 
-    const saveFooter = createEl('div', { className: 'about-footer save-footer' });
-    const saveCancelBtn = createEl('button', {
-      className: 'tb-btn',
-      text: t('save.cancel'),
-      attrs: { type: 'button' },
-    });
-    const saveConfirmBtn = createEl('button', {
-      className: 'tb-btn',
-      text: t('save.confirm'),
-      attrs: { type: 'submit' },
-    });
-    saveFooter.append(saveCancelBtn, saveConfirmBtn);
-
-    saveForm.append(saveHeader, saveBody, saveFooter);
-    saveDialog.appendChild(saveForm);
-    workbench.appendChild(saveDialog);
-
-    const renderDiagnosticsList = (
-      diagnostics: readonly Diagnostic[],
-      truncatedDiagnostics: boolean,
-    ): void => {
-      diagListContainer.replaceChildren();
-      if (diagnostics.length === 0) {
-        return;
-      }
-
-      const list = createEl('ul', {
-        className: 'diag-list',
-        attrs: { 'aria-label': t('diagnostics.listLabel') },
-      });
-
-      for (const diag of diagnostics) {
-        const item = createEl('li', { className: `diag-item is-${diag.severity}` });
-        const jumpBtn = createEl('button', {
-          className: 'diag-item-btn',
-          attrs: { type: 'button' },
-        });
-
-        jumpBtn.appendChild(
-          createEl('span', {
-            className: `diag-severity is-${diag.severity}`,
-            text: severityLabel(diag.severity),
-          }),
-        );
-
-        if (diag.range) {
-          jumpBtn.appendChild(
-            createEl('span', {
-              className: 'diag-loc',
-              text: t('diagnostics.location', {
-                line: diag.range.line,
-                column: diag.range.column,
-              }),
-            }),
-          );
-        }
-
-        const localizedMsg = formatMessage(
-          CATALOGS[locale],
-          CATALOGS.en,
-          diag.messageKey,
-          diag.params,
-        );
-        jumpBtn.appendChild(createEl('span', { className: 'diag-text', text: localizedMsg }));
-
-        jumpBtn.addEventListener('click', () => {
-          const target = activeTextarea;
-          if (!target) {
-            return;
-          }
-          const rawOffset = diag.range?.offset ?? 0;
-          const clampedOffset = Math.min(Math.max(0, rawOffset), target.value.length);
-          target.focus();
-          target.setSelectionRange(clampedOffset, clampedOffset);
-          scheduleXPathLookup(0);
-        });
-
-        item.appendChild(jumpBtn);
-
-        const rawDetail = diag.params?.detail;
-        if (typeof rawDetail === 'string' && rawDetail.length > 0) {
-          const details = createEl('details', { className: 'diag-raw-details' });
-          details.append(
-            createEl('summary', {
-              className: 'diag-raw-summary',
-              text: t('diagnostics.rawDetail'),
-            }),
-            createEl('code', { className: 'diag-raw-code', text: rawDetail }),
-          );
-          item.appendChild(details);
-        }
-
-        list.appendChild(item);
-      }
-
-      diagListContainer.appendChild(list);
-
-      if (truncatedDiagnostics) {
-        diagListContainer.appendChild(
-          createEl('p', {
-            className: 'diag-truncated',
-            text: t('diagnostics.truncated', { shown: diagnostics.length }),
-          }),
-        );
-      }
-    };
-
-    const updateStatusViews = (): void => {
-      resultBox.classList.remove('is-valid', 'is-invalid', 'has-warnings');
-      diagListContainer.replaceChildren();
-
-      const encodingValue =
-        loadedEncodingInfo === null
-          ? t('statusBar.encodingNone')
-          : loadedEncodingInfo.hasBom
-            ? t('statusBar.encodingWithBom', { encoding: loadedEncodingInfo.encoding })
-            : loadedEncodingInfo.encoding;
-      statusEncodingField.textContent = t('statusBar.encoding', { value: encodingValue });
-
-      if (validationStatus.kind === 'empty') {
-        resultBox.textContent = t('preview.empty');
-        statusStateField.textContent = t('statusBar.ready');
-        statusCountField.textContent = t('statusBar.elements', { count: 0 });
-      } else if (validationStatus.kind === 'too-large') {
-        resultBox.classList.add('is-invalid');
-        resultBox.textContent = t('preview.tooLarge', {
-          limitMb: validationStatus.limitMb,
-        });
-        statusStateField.textContent = t('statusBar.tooLarge');
-        statusCountField.textContent = t('statusBar.elements', { count: 0 });
-      } else if (validationStatus.kind === 'decode-error') {
-        resultBox.classList.add('is-invalid');
-        resultBox.textContent =
-          validationStatus.failureReason === 'unsupported'
-            ? t('preview.unsupportedEncoding', { encoding: validationStatus.encoding })
-            : t('preview.decodeError', { encoding: validationStatus.encoding });
-        statusStateField.textContent = t('statusBar.decodeError');
-        statusCountField.textContent = t('statusBar.elements', { count: 0 });
-        renderDiagnosticsList(validationStatus.diagnostics, false);
-      } else if (validationStatus.kind === 'read-error') {
-        resultBox.classList.add('is-invalid');
-        resultBox.textContent = t('preview.readError', {
-          detail: validationStatus.detail,
-        });
-        statusStateField.textContent = t('statusBar.notWellFormed');
-        statusCountField.textContent = t('statusBar.elements', { count: 0 });
-      } else if (validationStatus.kind === 'worker-timeout') {
-        resultBox.classList.add('is-invalid');
-        resultBox.textContent = t('preview.workerTimeout');
-        statusStateField.textContent = t('statusBar.notWellFormed');
-        statusCountField.textContent = t('statusBar.elements', { count: 0 });
-      } else if (validationStatus.kind === 'worker-error') {
-        resultBox.classList.add('is-invalid');
-        resultBox.textContent = t('preview.workerError', {
-          detail: validationStatus.detail,
-        });
-        statusStateField.textContent = t('statusBar.notWellFormed');
-        statusCountField.textContent = t('statusBar.elements', { count: 0 });
-      } else if (validationStatus.kind === 'format-failed') {
-        resultBox.classList.add('is-invalid');
-        resultBox.textContent =
-          validationStatus.reason === 'output-too-large'
-            ? t('preview.formatOutputTooLarge', { limitMb: 1 })
-            : t('preview.formatError', { detail: validationStatus.detail ?? '' });
-        statusStateField.textContent = t('statusBar.formatFailed');
-        statusCountField.textContent = t('statusBar.elements', { count: 0 });
-        renderDiagnosticsList(validationStatus.diagnostics, false);
-      } else {
-        const { result } = validationStatus;
-        const errorCount = result.diagnostics.filter((d) => d.severity === 'error').length;
-        const warningCount = result.diagnostics.filter((d) => d.severity === 'warning').length;
-
-        if (result.wellFormed) {
-          resultBox.classList.add('is-valid');
-          if (warningCount > 0) {
-            resultBox.classList.add('has-warnings');
-            resultBox.textContent = t('preview.validWithWarnings', {
-              count: result.elementCount,
-              root: result.rootElement ?? '',
-              warnings: warningCount,
-            });
-            statusStateField.textContent = t('statusBar.warnings', { count: warningCount });
-          } else {
-            resultBox.textContent = t('preview.valid', {
-              count: result.elementCount,
-              root: result.rootElement ?? '',
-            });
-            statusStateField.textContent = t('statusBar.wellFormed');
-          }
-        } else {
-          resultBox.classList.add('is-invalid');
-          resultBox.textContent = t(
-            validationStatus.formatRejected ? 'preview.formatInvalid' : 'preview.invalidCount',
-            {
-              errors: errorCount,
-              warnings: warningCount,
-            },
-          );
-          statusStateField.textContent = t('statusBar.notWellFormed');
-        }
-        statusCountField.textContent = t('statusBar.elements', { count: result.elementCount });
-        renderDiagnosticsList(result.diagnostics, result.truncatedDiagnostics);
-      }
-
-      updateXPathViewFn?.();
-    };
-
-    const updateXPathStatusView = (): void => {
-      const effectiveStatus: XPathStatusState =
-        validationStatus.kind === 'empty' ||
-        validationStatus.kind === 'too-large' ||
-        validationStatus.kind === 'decode-error' ||
-        validationStatus.kind === 'read-error' ||
-        (validationStatus.kind === 'checked' && !validationStatus.result.wellFormed)
-          ? { kind: 'none' }
-          : xpathStatus;
-      if (effectiveStatus.kind === 'path') {
-        statusXpathField.textContent = t('statusBar.xpath', {
-          value: effectiveStatus.breadcrumb,
-        });
-        statusXpathField.title = effectiveStatus.breadcrumb;
-      } else {
-        statusXpathField.textContent = t('statusBar.xpath', {
-          value: t('statusBar.xpathNone'),
-        });
-        statusXpathField.removeAttribute('title');
-      }
-    };
-
-    updateViewsFn = updateStatusViews;
-    updateXPathViewFn = updateXPathStatusView;
-    setCheckingStateFn = () => {
-      statusStateField.textContent = t('statusBar.checking');
-    };
-    updateStatusViews();
-
-    fileInput.addEventListener('change', async () => {
-      const file = fileInput.files?.[0];
-      if (!file) {
-        return;
-      }
-      await openXmlFile(file);
-    });
-
-    sampleBtn.addEventListener('click', () => {
-      clearDebounce();
-      resetLoadedFileState();
-      xmlDraft = t('preview.sampleXml');
-      textarea.value = xmlDraft;
+    if (utf8ByteLength(sentText) > MAX_PREVIEW_BYTES) {
+      ++checkEpoch;
+      workerClient.cancel();
+      validationStatus = { kind: 'too-large', limitMb: 1 };
       clearXPathStatus();
-      void runWorkerCheck(xmlDraft, { assumedEncoding: 'UTF-8' });
+      updateStatusViews();
+      return;
+    }
+
+    const formatEpoch = ++checkEpoch;
+    const formatWasUnmodifiedFile =
+      loadedFileBytes !== null && !documentEditState.isModifiedSinceLoad;
+    const formatAssumedEncoding = documentEditState.lastAssumedEncoding;
+    const formatPreDiagnostics = documentEditState.lastPreDiagnostics;
+    setCheckingState();
+
+    const formatOptions = resolveFormatWorkerOptions({
+      indentStyle,
+      hasLoadedFile: loadedFileBytes !== null,
+      isModifiedSinceLoad: documentEditState.isModifiedSinceLoad,
+      maxOutputChars: MAX_PREVIEW_BYTES,
+      ...(formatAssumedEncoding !== undefined ? { assumedEncoding: formatAssumedEncoding } : {}),
     });
 
-    formatBtn.addEventListener('click', async () => {
-      clearDebounce();
-      const targetAtStart = activeTextarea ?? textarea;
-      const sentText = targetAtStart.value;
-      xmlDraft = sentText;
-
-      if (utf8ByteLength(sentText) > MAX_PREVIEW_BYTES) {
-        ++checkEpoch;
-        workerClient.cancel();
-        validationStatus = { kind: 'too-large', limitMb: 1 };
-        clearXPathStatus();
-        updateViewsFn?.();
-        return;
-      }
-
-      const formatEpoch = ++checkEpoch;
-      const formatWasUnmodifiedFile = loadedFileBytes !== null && !isModifiedSinceLoad;
-      const formatAssumedEncoding = lastAssumedEncoding;
-      const formatPreDiagnostics = lastPreDiagnostics;
-      setCheckingStateFn?.();
-
-      const formatOptions = resolveFormatWorkerOptions({
-        indentStyle,
-        hasLoadedFile: loadedFileBytes !== null,
-        isModifiedSinceLoad,
-        maxOutputChars: MAX_PREVIEW_BYTES,
-        ...(formatAssumedEncoding !== undefined ? { assumedEncoding: formatAssumedEncoding } : {}),
-      });
-
-      let outcome;
-      try {
-        outcome = await workerClient.format(sentText, formatOptions);
-      } catch (err: unknown) {
-        if (
-          shouldDiscardAsyncFormatResult({
-            requestEpoch: formatEpoch,
-            currentEpoch: checkEpoch,
-            sentText,
-            currentTextareaValue: activeTextarea?.value ?? xmlDraft,
-          })
-        ) {
-          return;
-        }
-        const detail = err instanceof Error ? err.message : String(err);
-        validationStatus = {
-          kind: 'format-failed',
-          reason: 'internal-error',
-          detail,
-          diagnostics: [],
-        };
-        updateViewsFn?.();
-        return;
-      }
-
+    let outcome;
+    try {
+      outcome = await workerClient.format(sentText, formatOptions);
+    } catch (err: unknown) {
       if (
-        outcome.status === 'cancelled' ||
         shouldDiscardAsyncFormatResult({
           requestEpoch: formatEpoch,
           currentEpoch: checkEpoch,
           sentText,
-          currentTextareaValue: activeTextarea?.value ?? xmlDraft,
+          currentTextareaValue: textarea.value,
         })
       ) {
         return;
       }
+      const detail = err instanceof Error ? err.message : String(err);
+      validationStatus = {
+        kind: 'format-failed',
+        reason: 'internal-error',
+        detail,
+        diagnostics: [],
+      };
+      updateStatusViews();
+      return;
+    }
 
-      if (outcome.status === 'timeout') {
+    if (
+      outcome.status === 'cancelled' ||
+      shouldDiscardAsyncFormatResult({
+        requestEpoch: formatEpoch,
+        currentEpoch: checkEpoch,
+        sentText,
+        currentTextareaValue: textarea.value,
+      })
+    ) {
+      return;
+    }
+
+    if (outcome.status === 'timeout') {
+      validationStatus = {
+        kind: 'format-failed',
+        reason: 'internal-error',
+        detail: t('preview.workerTimeout'),
+        diagnostics: [],
+      };
+      updateStatusViews();
+      return;
+    }
+
+    if (outcome.status === 'error') {
+      validationStatus = {
+        kind: 'format-failed',
+        reason: 'internal-error',
+        detail: outcome.message,
+        diagnostics: [],
+      };
+      updateStatusViews();
+      return;
+    }
+
+    const formattedResult = enforceFormattedByteLimit(outcome.result, MAX_PREVIEW_BYTES);
+    if (!formattedResult.ok) {
+      const failureReason = classifyFormatFailure(formattedResult.diagnostics);
+      if (failureReason === 'invalid') {
         validationStatus = {
-          kind: 'format-failed',
-          reason: 'internal-error',
-          detail: t('preview.workerTimeout'),
-          diagnostics: [],
-        };
-        updateViewsFn?.();
-        return;
-      }
-
-      if (outcome.status === 'error') {
-        validationStatus = {
-          kind: 'format-failed',
-          reason: 'internal-error',
-          detail: outcome.message,
-          diagnostics: [],
-        };
-        updateViewsFn?.();
-        return;
-      }
-
-      const formattedResult = enforceFormattedByteLimit(outcome.result, MAX_PREVIEW_BYTES);
-      if (!formattedResult.ok) {
-        const failureReason = classifyFormatFailure(formattedResult.diagnostics);
-        if (failureReason === 'invalid') {
-          validationStatus = {
-            kind: 'checked',
-            formatRejected: true,
-            result: {
-              wellFormed: false,
-              diagnostics: formattedResult.diagnostics,
-              elementCount: formattedResult.elementCount,
-              truncatedDiagnostics: formattedResult.truncatedDiagnostics,
-              ...(formattedResult.rootElement !== undefined
-                ? { rootElement: formattedResult.rootElement }
-                : {}),
-            },
-          };
-        } else {
-          const rawDetail = formattedResult.diagnostics[0]?.params?.detail;
-          const detail =
-            typeof rawDetail === 'string' && rawDetail.length > 0 ? rawDetail : undefined;
-          validationStatus = {
-            kind: 'format-failed',
-            reason: failureReason,
-            ...(detail !== undefined ? { detail } : {}),
+          kind: 'checked',
+          formatRejected: true,
+          result: {
+            wellFormed: false,
             diagnostics: formattedResult.diagnostics,
-          };
-        }
-        updateViewsFn?.();
-        return;
-      }
-
-      if (formattedResult.changed) {
-        const targetTextarea = activeTextarea ?? textarea;
-        replaceTextareaValue(targetTextarea, formattedResult.formatted);
-        xmlDraft = targetTextarea.value;
-        isModifiedSinceLoad = true;
-        lastAssumedEncoding = undefined;
-        lastPreDiagnostics = [];
-        scheduleXPathLookup(0);
-        void runWorkerCheck(xmlDraft);
-      } else if (formatWasUnmodifiedFile) {
-        void runWorkerCheck(xmlDraft, {
-          ...(formatAssumedEncoding !== undefined
-            ? { assumedEncoding: formatAssumedEncoding }
-            : {}),
-          preDiagnostics: formatPreDiagnostics,
-        });
+            elementCount: formattedResult.elementCount,
+            truncatedDiagnostics: formattedResult.truncatedDiagnostics,
+            ...(formattedResult.rootElement !== undefined
+              ? { rootElement: formattedResult.rootElement }
+              : {}),
+          },
+        };
       } else {
-        void runWorkerCheck(xmlDraft);
+        const rawDetail = formattedResult.diagnostics[0]?.params?.detail;
+        const detail =
+          typeof rawDetail === 'string' && rawDetail.length > 0 ? rawDetail : undefined;
+        validationStatus = {
+          kind: 'format-failed',
+          reason: failureReason,
+          ...(detail !== undefined ? { detail } : {}),
+          diagnostics: formattedResult.diagnostics,
+        };
       }
-    });
+      updateStatusViews();
+      return;
+    }
 
-    checkBtn.addEventListener('click', () => {
-      clearDebounce();
+    if (formattedResult.changed) {
+      replaceTextareaValue(textarea, formattedResult.formatted);
       xmlDraft = textarea.value;
-      if (loadedFileBytes !== null && !isModifiedSinceLoad) {
-        void runWorkerCheck(xmlDraft, {
-          ...(lastAssumedEncoding !== undefined ? { assumedEncoding: lastAssumedEncoding } : {}),
-          preDiagnostics: lastPreDiagnostics,
-        });
-      } else {
-        void runWorkerCheck(xmlDraft);
-      }
-    });
-
-    let utf8BomChoice = false;
-
-    const syncSaveBomControl = (): void => {
-      const selectedEnc = isSaveEncoding(saveEncodingSelect.value)
-        ? saveEncodingSelect.value
-        : 'UTF-8';
-      if (selectedEnc === 'UTF-8') {
-        saveBomCheckbox.disabled = false;
-        saveBomCheckbox.checked = utf8BomChoice;
-        saveBomHint.hidden = true;
-      } else {
-        saveBomCheckbox.disabled = true;
-        saveBomCheckbox.checked = true;
-        saveBomHint.hidden = false;
-      }
-    };
-
-    const syncSaveDeclarationPrompt = (): void => {
-      const selectedEnc = isSaveEncoding(saveEncodingSelect.value)
-        ? saveEncodingSelect.value
-        : 'UTF-8';
-      const currentText = activeTextarea?.value ?? xmlDraft;
-      const declCheck = inspectXmlDeclarationForSave(currentText, selectedEnc);
-      if (declCheck.needsUpdate) {
-        saveDeclBox.hidden = false;
-        saveDeclCheckbox.checked = true;
-        saveDeclLabel.textContent = t('save.updateDecl', { encoding: selectedEnc });
-        saveDeclDetail.textContent =
-          declCheck.declaredEncoding !== undefined
-            ? t('save.updateDeclDetail', { declared: declCheck.declaredEncoding })
-            : t('save.addDeclEncodingDetail');
-      } else {
-        saveDeclBox.hidden = true;
-        saveDeclCheckbox.checked = false;
-      }
-    };
-
-    saveBomCheckbox.addEventListener('change', () => {
-      if (saveEncodingSelect.value === 'UTF-8') {
-        utf8BomChoice = saveBomCheckbox.checked;
-      }
-    });
-
-    saveEncodingSelect.addEventListener('change', () => {
-      syncSaveBomControl();
-      syncSaveDeclarationPrompt();
-    });
-
-    saveBtn.addEventListener('click', () => {
-      xmlDraft = activeTextarea?.value ?? xmlDraft;
-      const prefs = getDefaultSavePreferences(loadedEncodingInfo, loadedLineEnding);
-      saveFilenameInput.value = sanitizeDownloadFilename(loadedFileName);
-      saveEncodingSelect.value = prefs.encoding;
-      utf8BomChoice = prefs.encoding === 'UTF-8' ? prefs.includeBom : false;
-      saveEolSelect.value = prefs.lineEnding;
-
-      if (prefs.legacySourceEncoding !== undefined) {
-        saveLegacyNotice.hidden = false;
-        saveLegacyNotice.textContent = t('save.legacyNotice', {
-          encoding: prefs.legacySourceEncoding,
-        });
-      } else {
-        saveLegacyNotice.hidden = true;
-        saveLegacyNotice.textContent = '';
-      }
-
-      saveErrorBox.hidden = true;
-      saveErrorBox.textContent = '';
-      syncSaveBomControl();
-      syncSaveDeclarationPrompt();
-
-      if (!saveDialog.open) {
-        saveDialog.showModal();
-        saveFilenameInput.focus();
-        saveFilenameInput.select();
-      }
-    });
-
-    saveCancelBtn.addEventListener('click', () => {
-      saveDialog.close();
-    });
-
-    saveDialog.addEventListener('close', () => {
-      document.getElementById('save-button')?.focus();
-    });
-
-    saveForm.addEventListener('submit', (event) => {
-      event.preventDefault();
-      saveErrorBox.hidden = true;
-      saveErrorBox.textContent = '';
-
-      const currentText = activeTextarea?.value ?? xmlDraft;
-      const chosenEncoding = isSaveEncoding(saveEncodingSelect.value)
-        ? saveEncodingSelect.value
-        : 'UTF-8';
-      const chosenEol = isLineEnding(saveEolSelect.value) ? saveEolSelect.value : 'LF';
-      const includeBom = chosenEncoding === 'UTF-8' ? saveBomCheckbox.checked : true;
-      const updateDeclaration = !saveDeclBox.hidden && saveDeclCheckbox.checked;
-      const filename = sanitizeDownloadFilename(saveFilenameInput.value);
-
-      const prepared = prepareXmlSaveBytes(currentText, {
-        encoding: chosenEncoding,
-        includeBom,
-        lineEnding: chosenEol,
-        updateDeclaration,
+      documentEditState = transitionDocumentEditState(documentEditState, {
+        type: 'format-succeeded',
+        changed: true,
       });
+      scheduleXPathLookup(0);
+      void runWorkerCheck(xmlDraft);
+    } else if (formatWasUnmodifiedFile) {
+      void runWorkerCheck(xmlDraft, {
+        ...(formatAssumedEncoding !== undefined ? { assumedEncoding: formatAssumedEncoding } : {}),
+        preDiagnostics: formatPreDiagnostics,
+      });
+    } else {
+      void runWorkerCheck(xmlDraft);
+    }
+  });
 
-      if (!prepared.ok) {
-        saveErrorBox.hidden = false;
-        saveErrorBox.textContent = t('save.loneSurrogateError', {
-          codeUnit: formatCodeUnitHex(prepared.loneSurrogate.codeUnit),
-          line: prepared.loneSurrogate.line,
-          column: prepared.loneSurrogate.column,
-          offset: prepared.loneSurrogate.offset,
-        });
-        return;
-      }
+  checkBtn.addEventListener('click', () => {
+    clearDebounce();
+    xmlDraft = textarea.value;
+    if (loadedFileBytes !== null && !documentEditState.isModifiedSinceLoad) {
+      void runWorkerCheck(xmlDraft, {
+        ...(documentEditState.lastAssumedEncoding !== undefined
+          ? { assumedEncoding: documentEditState.lastAssumedEncoding }
+          : {}),
+        preDiagnostics: documentEditState.lastPreDiagnostics,
+      });
+    } else {
+      void runWorkerCheck(xmlDraft);
+    }
+  });
 
-      triggerBlobDownload(prepared.bytes, filename);
-      saveDialog.close();
-    });
+  let utf8BomChoice = false;
 
-    aboutBtn.addEventListener('click', () => {
-      if (!aboutDialog.open) {
-        aboutDialog.showModal();
-      }
-    });
-
-    aboutCloseBtn.addEventListener('click', () => {
-      aboutDialog.close();
-    });
-
-    aboutDialog.addEventListener('close', () => {
-      document.getElementById('about-button')?.focus();
-    });
-
-    root.appendChild(workbench);
+  const syncSaveBomControl = (): void => {
+    const selectedEnc = isSaveEncoding(saveEncodingSelect.value)
+      ? saveEncodingSelect.value
+      : 'UTF-8';
+    if (selectedEnc === 'UTF-8') {
+      saveBomCheckbox.disabled = false;
+      saveBomCheckbox.checked = utf8BomChoice;
+      saveBomHint.hidden = true;
+    } else {
+      saveBomCheckbox.disabled = true;
+      saveBomCheckbox.checked = true;
+      saveBomHint.hidden = false;
+    }
   };
 
-  render();
+  const syncSaveDeclarationPrompt = (): void => {
+    const selectedEnc = isSaveEncoding(saveEncodingSelect.value)
+      ? saveEncodingSelect.value
+      : 'UTF-8';
+    const currentText = textarea.value;
+    const declCheck = inspectXmlDeclarationForSave(currentText, selectedEnc);
+    activeSaveSelectedEncoding = selectedEnc;
+    activeSaveDeclCheck = declCheck;
+    if (declCheck.needsUpdate) {
+      saveDeclBox.hidden = false;
+      saveDeclCheckbox.checked = true;
+      updateSaveDeclarationLocaleText();
+    } else {
+      saveDeclBox.hidden = true;
+      saveDeclCheckbox.checked = false;
+    }
+  };
+
+  saveBomCheckbox.addEventListener('change', () => {
+    if (saveEncodingSelect.value === 'UTF-8') {
+      utf8BomChoice = saveBomCheckbox.checked;
+    }
+  });
+
+  saveEncodingSelect.addEventListener('change', () => {
+    syncSaveBomControl();
+    syncSaveDeclarationPrompt();
+  });
+
+  saveBtn.addEventListener('click', () => {
+    xmlDraft = textarea.value;
+    const prefs = getDefaultSavePreferences(loadedEncodingInfo, loadedLineEnding);
+    saveFilenameInput.value = sanitizeDownloadFilename(loadedFileName);
+    saveEncodingSelect.value = prefs.encoding;
+    utf8BomChoice = prefs.encoding === 'UTF-8' ? prefs.includeBom : false;
+    saveEolSelect.value = prefs.lineEnding;
+
+    activeSaveLegacyEncoding = prefs.legacySourceEncoding;
+    if (activeSaveLegacyEncoding !== undefined) {
+      saveLegacyNotice.hidden = false;
+      saveLegacyNotice.textContent = t('save.legacyNotice', {
+        encoding: activeSaveLegacyEncoding,
+      });
+    } else {
+      saveLegacyNotice.hidden = true;
+      saveLegacyNotice.textContent = '';
+    }
+
+    activeSaveLoneSurrogate = null;
+    saveErrorBox.hidden = true;
+    saveErrorBox.textContent = '';
+    syncSaveBomControl();
+    syncSaveDeclarationPrompt();
+
+    if (!saveDialog.open) {
+      saveDialog.showModal();
+      saveFilenameInput.focus();
+      saveFilenameInput.select();
+    }
+  });
+
+  saveCancelBtn.addEventListener('click', () => {
+    saveDialog.close();
+  });
+
+  saveDialog.addEventListener('close', () => {
+    activeSaveLegacyEncoding = undefined;
+    activeSaveDeclCheck = null;
+    activeSaveLoneSurrogate = null;
+    saveBtn.focus();
+  });
+
+  saveForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    activeSaveLoneSurrogate = null;
+    saveErrorBox.hidden = true;
+    saveErrorBox.textContent = '';
+
+    const currentText = textarea.value;
+    const chosenEncoding = isSaveEncoding(saveEncodingSelect.value)
+      ? saveEncodingSelect.value
+      : 'UTF-8';
+    const chosenEol = isLineEnding(saveEolSelect.value) ? saveEolSelect.value : 'LF';
+    const includeBom = chosenEncoding === 'UTF-8' ? saveBomCheckbox.checked : true;
+    const updateDeclaration = !saveDeclBox.hidden && saveDeclCheckbox.checked;
+    const filename = sanitizeDownloadFilename(saveFilenameInput.value);
+
+    const prepared = prepareXmlSaveBytes(currentText, {
+      encoding: chosenEncoding,
+      includeBom,
+      lineEnding: chosenEol,
+      updateDeclaration,
+    });
+
+    if (!prepared.ok) {
+      activeSaveLoneSurrogate = prepared.loneSurrogate;
+      saveErrorBox.hidden = false;
+      saveErrorBox.textContent = t('save.loneSurrogateError', {
+        codeUnit: formatCodeUnitHex(prepared.loneSurrogate.codeUnit),
+        line: prepared.loneSurrogate.line,
+        column: prepared.loneSurrogate.column,
+        offset: prepared.loneSurrogate.offset,
+      });
+      return;
+    }
+
+    triggerBlobDownload(prepared.bytes, filename);
+    saveDialog.close();
+  });
+
+  aboutBtn.addEventListener('click', () => {
+    if (!aboutDialog.open) {
+      aboutDialog.showModal();
+    }
+  });
+
+  aboutCloseBtn.addEventListener('click', () => {
+    aboutDialog.close();
+  });
+
+  aboutDialog.addEventListener('close', () => {
+    aboutBtn.focus();
+  });
+
+  applyLocale();
 }
 
 mountApp();
