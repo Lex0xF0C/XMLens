@@ -1,0 +1,10 @@
+{
+  "name": "@xmlens/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@xmlens/core": "*",
+    "@xmlens/workers": "*"
+  }
+}

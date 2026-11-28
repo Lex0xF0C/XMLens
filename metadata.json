@@ -1,0 +1,5 @@
+{
+  "name": "XMLens",
+  "description": "Browser-only, MIT-licensed XML development and visualization workbench.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<akomaNtoso xmlns="http://docs.oasis-open.org/legaldocml/ns/akn/3.0" xmlns:xmlens="https://example.org/xmlens">
+  <act name="bilingual-sample">
+    <meta>
+      <identification source="#xmlens">
+        <FRBRWork>
+          <FRBRthis value="/akn/un/act/2026/bilingual"/>
+        </FRBRWork>
+      </identification>
+    </meta>
+    <body>
+      <article eId="art_1" xmlens:note="ja-en">
+        <num>第1条 / Article 1</num>
+        <paragraph eId="art_1__para_1">
+          <content>
+            <p>ブラウザ内でのみ処理されます。All processing stays local.</p>
+          </content>
+        </paragraph>
+      </article>
+    </body>
+  </act>
+</akomaNtoso>
