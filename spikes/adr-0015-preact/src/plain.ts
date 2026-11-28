@@ -18,7 +18,11 @@ const status = document.createElement('p');
 status.setAttribute('aria-live', 'polite');
 const button = document.createElement('button');
 button.textContent = 'Increment signal-like state';
-button.addEventListener('click', () => { selected = (selected + 1) % labels.length; update(); });
+button.addEventListener('click', () => {
+  selected = (selected + 1) % labels.length;
+  update();
+});
+
 function update() {
   tree.replaceChildren();
   labels.forEach((label, index) => {
@@ -30,14 +34,21 @@ function update() {
     item.addEventListener('keydown', (event) => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
-        selected = (selected + (event.key === 'ArrowDown' ? 1 : labels.length - 1)) % labels.length;
+        selected =
+          (selected + (event.key === 'ArrowDown' ? 1 : labels.length - 1)) %
+          labels.length;
         update();
-        tree.querySelector<HTMLElement>(`[role="treeitem"]:nth-child(${selected + 1})`)?.focus();
+        tree
+          .querySelector<HTMLElement>(
+            `[role="treeitem"]:nth-child(${selected + 1})`,
+          )
+          ?.focus();
       }
     });
     tree.append(item);
   });
   status.textContent = `Selected: ${labels[selected]}`;
 }
+
 shadow.append(tree, button, status);
 update();
