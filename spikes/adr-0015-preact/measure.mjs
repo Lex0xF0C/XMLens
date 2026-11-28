@@ -17,11 +17,11 @@ async function collect(directory, result = []) {
 }
 
 for (const variant of ['plain', 'preact']) {
-  const files = await collect(\`dist/\${variant}\`);
+  const files = await collect('dist/' + variant);
   const total = files.reduce((sum, file) => ({ raw: sum.raw + file.raw, gzip: sum.gzip + file.gzip }), { raw: 0, gzip: 0 });
   const byType = Object.fromEntries(['js', 'css'].map(type => {
     const group = files.filter(file => file.type === type);
     return [type, group.reduce((sum, file) => ({ raw: sum.raw + file.raw, gzip: sum.gzip + file.gzip }), { raw: 0, gzip: 0 })];
   }));
-  stdout.write(\`\${JSON.stringify({ variant, files, byType, total }, null, 2)}\\n\`);
+  stdout.write(JSON.stringify({ variant, files, byType, total }, null, 2) + '\n');
 }
