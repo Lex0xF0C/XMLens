@@ -5,7 +5,9 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 ## [Pending]
 
-(none)
+### Added
+
+- Added an isolated ADR-0015 bundle spike under `spikes/adr-0015-preact/` comparing equivalent Plain DOM and Preact + Signals ARIA-tree harnesses in production Vite builds, including ShadowRoot interaction checks and raw/gzip size reporting; no application dependencies or UI were changed.
 
 ## [DEV-0011] - 2026-11-28
 
