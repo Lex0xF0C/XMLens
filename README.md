@@ -25,6 +25,7 @@ npm run dev        # Start the Vite dev server (http://localhost:3000)
 npm run check      # Run lint, format:check, typecheck, unit tests, i18n check, binary guard, license check, notices check, and changelog check
 npm run build      # Build the static production bundle into dist/
 npm run preview    # Preview the production build locally
+npm run test:e2e   # Build dist/ and run Playwright + axe E2E tests (Chromium, Firefox, WebKit)
 ```
 
 ## Sub-Path Deployment (GitHub Pages)

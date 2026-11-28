@@ -253,6 +253,48 @@ export const xmlEditorTheme = EditorView.theme({
     color: 'var(--text-primary)',
     borderColor: 'var(--border-color)',
   },
+  '.cm-panels-top': {
+    borderBottom: '1px solid var(--border-color)',
+  },
+  '.cm-panels-bottom': {
+    borderTop: '1px solid var(--border-color)',
+  },
+  '.cm-button': {
+    backgroundColor: 'var(--bg-control)',
+    backgroundImage: 'none',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: '2px',
+  },
+  '.cm-button:hover': {
+    backgroundColor: 'var(--bg-control-hover)',
+  },
+  '.cm-button:active': {
+    backgroundColor: 'var(--bg-control-hover)',
+    backgroundImage: 'none',
+  },
+  '.cm-button:focus-visible, .cm-textfield:focus-visible, .cm-panel.cm-search [name=close]:focus-visible':
+    {
+      outline: '2px solid var(--focus-ring)',
+      outlineOffset: '1px',
+    },
+  '.cm-textfield': {
+    backgroundColor: 'var(--bg-surface)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: '2px',
+  },
+  '.cm-textfield::placeholder': {
+    color: 'var(--text-secondary)',
+    opacity: '1',
+  },
+  '.cm-panel.cm-search [name=close]': {
+    color: 'var(--text-primary)',
+  },
+  '.cm-panel.cm-panel-lint ul [aria-selected]': {
+    backgroundColor: 'var(--selection-bg)',
+    color: 'var(--text-primary)',
+  },
   '.cm-tooltip': {
     backgroundColor: 'var(--bg-surface)',
     color: 'var(--text-primary)',

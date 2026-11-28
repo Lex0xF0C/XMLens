@@ -21,6 +21,7 @@
     "typecheck": "tsc --noEmit && tsc -p packages/core/tsconfig.json --noEmit && tsc -p packages/workers/tsconfig.json --noEmit && tsc -p spikes/r1-uri/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:e2e:spike": "vite build --config spikes/codemirror/vite.config.ts && playwright test --config spikes/codemirror/playwright.config.ts",
+    "test:e2e": "vite build && playwright test --config tests/e2e/playwright.config.ts",
     "i18n:check": "node scripts/check-i18n.mjs",
     "plugins:guard": "node scripts/check-no-third-party-binaries.mjs",
     "license:check": "node scripts/check-licenses.mjs",

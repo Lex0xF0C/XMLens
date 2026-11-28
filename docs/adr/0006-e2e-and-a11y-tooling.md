@@ -1,7 +1,7 @@
 # ADR-0006: Cross-Browser E2E & Accessibility Tooling (Playwright + axe)
 
-- **Status:** Accepted (2026-11-28 — `e2e-spike` passed 6/6 across Chromium, Firefox, and WebKit on CI run `46068522284`; constraints retained: `devDependencies` only, unmodified, never bundled into `dist/` or GitHub Pages; `MPL-2.0` exceptions strictly `@axe-core/playwright` and `axe-core`; Playwright browser binaries excluded from git and `dist/`; main-app `npm run test:e2e` pending M1b)
-- **Date:** 2026-11-24 (updated 2026-11-27; promoted 2026-11-28)
+- **Status:** Accepted (2026-11-28 — `e2e-spike` passed 6/6 across Chromium, Firefox, and WebKit on CI run `46068522284`; constraints retained: `devDependencies` only, unmodified, never bundled into `dist/` or GitHub Pages; `MPL-2.0` exceptions strictly `@axe-core/playwright` and `axe-core`; Playwright browser binaries excluded from git and `dist/`; M1b Step 3 production `tests/e2e/` + CI `e2e` job added, live CI `e2e` pass pending)
+- **Date:** 2026-11-24 (updated 2026-11-27; promoted 2026-11-28; production `tests/e2e/` added 2026-11-28)
 
 ## Context
 
@@ -77,7 +77,8 @@ Review notes & remaining TODOs:
 - **TODO (`actions/upload-artifact`):** Uploading `playwright-report/` on failure (`if: failure()`) is intentionally omitted until the exact 40-character commit SHA for `actions/upload-artifact` is verified (never guess SHAs).
 - **Production static target (`vite preview`):** `test:e2e:spike` builds `spikes/codemirror/` and launches `vite preview` (`127.0.0.1:3100`) rather than `vite dev`, exercising strict `style-src 'self'`.
 - **Telemetry / assertions:** `spikes/codemirror/e2e.spec.ts` attaches `page.addInitScript` for `securitypolicyviolation` events alongside `console` (`error`) and `pageerror` listeners, asserting zero errors across `chromium`, `firefox`, and `webkit`, plus `wcag22aa` axe checks.
-- **Promotion criterion (satisfied for `e2e-spike`, 2026-11-28):** Run `46068522284` achieved green across Chromium, Firefox, and WebKit; main-app `npm run test:e2e` will extend this harness when M1b lands.
+- **Promotion criterion (satisfied for `e2e-spike`, 2026-11-28):** Run `46068522284` achieved green across Chromium, Firefox, and WebKit; main-app `npm run test:e2e` extends this harness in M1b Step 3.
+- **M1b Step 3 production `e2e` harness (`tests/e2e/`, 2026-11-28):** Added `tests/e2e/playwright.config.ts` (`vite preview --host 127.0.0.1 --port 3000`, `cwd: '../..'`), `tests/e2e/helpers.ts`, `tests/e2e/app.spec.ts` (`8` scenarios × `2` locales `en`/`ja` across `chromium`, `firefox`, `webkit`), `npm run test:e2e`, and the CI `e2e` job in `.github/workflows/ci.yml` (using the same pinned `actions/checkout` and `actions/setup-node` commit SHAs, without `actions/upload-artifact`). Because AI Studio has no installed browsers, `npm run test:e2e` browser execution remains **`unverified`** locally and awaits the GitHub Actions `e2e` CI run; real IME composition, screen readers, and macOS/Safari hardware remain manual-only.
 
 ## Fallback: Manual Maintainer Checklist for Windows Browsers
 

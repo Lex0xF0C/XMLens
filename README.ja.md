@@ -25,6 +25,7 @@ npm run dev        # Vite 開発サーバを起動 (http://localhost:3000)
 npm run check      # lint / format:check / typecheck / test / i18n:check / plugins:guard / license:check / notices:check / changelog:check を実行
 npm run build      # dist/ に静的プロダクションビルドを出力
 npm run preview    # プロダクションビルドをローカルでプレビュー
+npm run test:e2e   # ビルド後に Playwright + axe E2E テストを実行 (Chromium, Firefox, WebKit)
 ```
 
 ## サブパス配備 (GitHub Pages)

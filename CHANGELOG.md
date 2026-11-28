@@ -7,6 +7,25 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0015] - 2026-11-28
+
+- **Sync:** direct
+- **Refs:** ADR-0005, ADR-0006, tests/e2e/playwright.config.ts, tests/e2e/helpers.ts, tests/e2e/app.spec.ts, package.json, tsconfig.json, .github/workflows/ci.yml, packages/app/src/editor/xmlEditorCore.ts, AGENTS.md, README.md, README.ja.md, docs/adr/0005-codemirror-and-csp.md, docs/adr/0006-e2e-and-a11y-tooling.md, docs/feature-matrix.md, CHANGELOG.md
+
+### Added
+
+- Added the production `packages/app` Playwright + axe (`wcag22aa`) E2E test suite under `tests/e2e/` (`playwright.config.ts`, `helpers.ts`, `app.spec.ts`: `8` scenarios × `2` locales `en`/`ja` across `chromium`, `firefox`, and `webkit`) targeting `vite preview --host 127.0.0.1 --port 3000` (`cwd: '../..'`) and asserting zero `securitypolicyviolation` events, zero console/page errors, zero external/WebSocket requests, ShadowRoot `adoptedStyleSheets` mounting, Light/Dark/High-contrast axe compliance, About/Save dialog focus restoration, in-place `applyLocale()` focus/selection/Undo preservation, sample Undo reset, single-step Format → Undo → Redo, `Tab`/`Shift+Tab` focus exit, keyboard Search panel flow, `UTF-8`/`UTF-8 (BOM)`/`UTF-16LE (BOM)`/`Shift_JIS`/`> 1 MiB` file opening, `.cm-content`/gutter file drops + text-drag non-interception, and debounced diagnostics + click-to-jump XPath updates.
+- Added `"test:e2e": "vite build && playwright test --config tests/e2e/playwright.config.ts"` to `package.json` (excluded from `"check"`) and the `e2e` job to `.github/workflows/ci.yml` alongside `e2e-spike` using the pinned `actions/checkout` and `actions/setup-node` commit SHAs.
+
+### Changed
+
+- Updated `tsconfig.json` (`"include"`) to typecheck `tests/e2e/**/*.ts` under strict TypeScript.
+- Updated `AGENTS.md` §2, `README.md`, `README.ja.md`, `docs/adr/0006-e2e-and-a11y-tooling.md`, `docs/adr/0005-codemirror-and-csp.md` (explicitly separating CI-covered vs. manual-only checks such as real IME, screen readers, and macOS/Safari hardware), and `docs/feature-matrix.md` (§1 and §2 status `Partial (M1b Step 3)` awaiting live CI `e2e` pass).
+
+### Fixed
+
+- Added explicit CSS custom-property theme rules in `packages/app/src/editor/xmlEditorCore.ts` (`xmlEditorTheme`) for `.cm-panels-top`, `.cm-panels-bottom`, `.cm-button` (`backgroundImage: 'none'`, `--bg-control`, `--text-primary`, `--border-color`), `.cm-textfield` (`--bg-surface`, `--text-primary`, `--border-color`, `::placeholder` `--text-secondary`), `.cm-panel.cm-search [name=close]`, and `.cm-panel.cm-panel-lint ul [aria-selected]` (`--selection-bg`), overriding `@codemirror/view` `&light` defaults (`linear-gradient` / `white` background) for Dark / High-contrast WCAG AA contrast and `AGENTS.md` §4.5 flat styling.
+
 ## [DEV-0014] - 2026-11-28
 
 - **Sync:** direct

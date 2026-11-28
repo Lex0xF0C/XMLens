@@ -42,7 +42,7 @@ npm run format         # Prettier (write); `format:check` for CI
 npm run typecheck      # tsc --noEmit (strict, root + packages/core DOM-free check)
 npm run test           # Vitest unit tests
 npm run test:e2e:spike # Playwright + axe for isolated CodeMirror 6 spike (spikes/codemirror/); excluded from `npm run check`
-npm run test:e2e       # Playwright (Chromium, Firefox, WebKit) incl. axe a11y checks for main app (not yet implemented)
+npm run test:e2e       # Playwright (Chromium, Firefox, WebKit) incl. axe a11y checks for main app (tests/e2e/); excluded from `npm run check`
 npm run i18n:check     # key parity, placeholder parity, and non-empty check between locales/en.json and locales/ja.json
 npm run plugins:guard  # fails on disallowed Saxon/xslt3 paths, dependencies, or vendor notices
 npm run license:check  # fails on disallowed or unverified dependency licenses
