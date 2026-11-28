@@ -1,7 +1,7 @@
 # ADR-0006: Cross-Browser E2E & Accessibility Tooling (Playwright + axe)
 
-- **Status:** Accepted (2026-11-27; conditional: `devDependencies` only, unmodified, never bundled into `dist/` or GitHub Pages; `MPL-2.0` exceptions limited strictly to `@axe-core/playwright` and `axe-core`; Playwright browser binaries excluded from git and `dist/`; will be promoted to full `Accepted` once the GitHub Actions `e2e` / `e2e-spike` job achieves its first green run across Chromium, Firefox, and WebKit)
-- **Date:** 2026-11-24 (updated 2026-11-27)
+- **Status:** Accepted (2026-11-28 — `e2e-spike` passed 6/6 across Chromium, Firefox, and WebKit on CI run `46068522284`; constraints retained: `devDependencies` only, unmodified, never bundled into `dist/` or GitHub Pages; `MPL-2.0` exceptions strictly `@axe-core/playwright` and `axe-core`; Playwright browser binaries excluded from git and `dist/`; main-app `npm run test:e2e` pending M1b)
+- **Date:** 2026-11-24 (updated 2026-11-27; promoted 2026-11-28)
 
 ## Context
 
@@ -73,10 +73,11 @@ Review notes & remaining TODOs:
 
 - **Initial CI failure & `webServer.cwd` requirement (2026-11-27):** The first `e2e-spike` CI run failed during Playwright `webServer` startup with `[WebServer] ✘ [ERROR] Could not resolve ".../spikes/codemirror/spikes/codemirror/vite.config.ts"` (`Exit code: 1`). Per Playwright's `TestConfigWebServer.cwd` documentation and runtime loader (`playwright@1.65.1`, `path.resolve(configDir, cwd)`), `webServer.cwd` defaults to the directory containing `playwright.config.ts` (`spikes/codemirror/`), and relative `cwd` values are resolved from that directory. Because `spikes/codemirror/playwright.config.ts` invokes `--config spikes/codemirror/vite.config.ts` from the repository root, `webServer.cwd: '../..'` is required.
 - **Second CI run & hidden file input `aria-hidden` fix (2026-11-27, run `45974182477`):** `webServer` startup succeeded and `3/6` tests passed across `chromium`, `firefox`, and `webkit` (the Format → Undo/Redo + `Tab` exit spec passed in all 3 browsers, and the first spec passed `CSP violations: 0`, `<style>` `0`, `adoptedStyleSheets > 0`, and `aria-label` checks). The sole failure across all 3 browsers was axe rule `label` (`critical`) on `spikes/codemirror/main.ts`'s visually hidden `<input class="hidden-file-input" type="file" tabindex="-1">`, which lacked `aria-hidden="true"` (present on the matching input in `packages/app/src/main.ts`). Added `'aria-hidden': 'true'` while preserving `tabindex: '-1'` (so `axe-core` `aria-hidden-focus` `tabIndex >= 0` remains satisfied) without weakening `e2e.spec.ts` axe assertions.
+- **Third CI run — green across all 3 browsers (2026-11-28, run `46068522284`):** `e2e-spike` passed all `6/6` tests (`2` specs × `chromium`, `firefox`, `webkit`) with `0` `securitypolicyviolation` events, `0` console/page errors, and `0` axe `wcag22aa` violations, satisfying the `e2e-spike` promotion criterion (`Status` promoted to `Accepted`). Main-app `npm run test:e2e` and CI `e2e` job remain deferred to M1b.
 - **TODO (`actions/upload-artifact`):** Uploading `playwright-report/` on failure (`if: failure()`) is intentionally omitted until the exact 40-character commit SHA for `actions/upload-artifact` is verified (never guess SHAs).
 - **Production static target (`vite preview`):** `test:e2e:spike` builds `spikes/codemirror/` and launches `vite preview` (`127.0.0.1:3100`) rather than `vite dev`, exercising strict `style-src 'self'`.
 - **Telemetry / assertions:** `spikes/codemirror/e2e.spec.ts` attaches `page.addInitScript` for `securitypolicyviolation` events alongside `console` (`error`) and `pageerror` listeners, asserting zero errors across `chromium`, `firefox`, and `webkit`, plus `wcag22aa` axe checks.
-- **Promotion criterion:** Once `e2e-spike` (and later `e2e` for the main app) achieves its first green CI run, update this ADR's Status from conditional `Accepted` to `Accepted`.
+- **Promotion criterion (satisfied for `e2e-spike`, 2026-11-28):** Run `46068522284` achieved green across Chromium, Firefox, and WebKit; main-app `npm run test:e2e` will extend this harness when M1b lands.
 
 ## Fallback: Manual Maintainer Checklist for Windows Browsers
 

@@ -1,16 +1,16 @@
 # ADR-0005: CodeMirror 6 Integration Under Strict CSP (M1b Preparation)
 
-- **Status:** Accepted (provisional, 2026-11-27, conditional)
-- **Date:** 2026-11-24 (spike results and provisional conditions appended 2026-11-27)
+- **Status:** Accepted (2026-11-28 — M1b prerequisites satisfied; production `<textarea>` replacement in `packages/app` not yet started)
+- **Date:** 2026-11-24 (provisional conditions appended 2026-11-27; spike gates verified 2026-11-28)
 
-### Provisional Acceptance Conditions (2026-11-27)
+### Acceptance Conditions & Ongoing M1b Constraints (2026-11-27 / Verified 2026-11-28)
 
-1. **`> 100 KB` gzipped exception (`AGENTS.md` §11):** The `+126.2–126.5 kB` gzipped bundle delta (~`10.57%` of the `1.5 MiB` budget) is approved **for CodeMirror 6 only**.
-2. **Primary verification via CI `e2e-spike`:** Automated verification runs via the GitHub Actions `e2e-spike` job across Chromium, Firefox, and WebKit (zero `securitypolicyviolation` via `page.addInitScript` + axe `wcag22aa`). Windows manual checklist retains **only Section B** (real IME, Tab exit + Search panel, Narrator/NVDA, High Contrast / `prefers-reduced-motion`); Section A is replaced by CI.
-3. **M1b production gating & escalation:** Replacing `<textarea>` in `packages/app` happens in a dedicated future task only **after** `e2e-spike` passes in all 3 browsers and manual Section B passes. If any browser fails Option A, **stop and return the decision to the maintainer** — do not automatically switch to Option C.
+1. **`> 100 KB` gzipped exception (`AGENTS.md` §11):** The `+126.2–126.5 kB` gzipped bundle delta (~`10.57%` of the `1.5 MiB` budget) is approved **for CodeMirror 6 only**. (Re-measure and re-confirm when CodeMirror 6 is integrated into `packages/app` in M1b.)
+2. **Primary verification via CI `e2e-spike` (Passed 2026-11-28, run `46068522284`):** Automated verification ran via GitHub Actions `e2e-spike` across Chromium, Firefox, and WebKit (`6/6` tests passed: zero `securitypolicyviolation` via `page.addInitScript`, `<style>` `0`, `adoptedStyleSheets > 0`, and axe `wcag22aa`). Windows manual checklist Section B (`B-1` real IME, `B-2` `Tab` exit + Search panel, `B-3` screen reader, `B-4` themes / High Contrast / `prefers-reduced-motion`) also completed by the maintainer on 2026-11-28.
+3. **M1b production gating & escalation:** Both prerequisites for starting M1b (`e2e-spike` passing in all 3 browsers and Windows manual Section B) are now satisfied; replacing `<textarea>` in `packages/app` remains **not yet started** and awaits maintainer approval of the M1b plan. The escalation rule stays active: if any browser fails Option A during M1b or production `test:e2e`, **stop and return the decision to the maintainer** — do not automatically switch to Option C.
 4. **M1b integration design constraints:**
    - File opening and sample loading must reset Undo history using a fresh `EditorState` (`view.setState(...)`), not a document replacement transaction.
-   - `ariaLabel` must update on i18n locale changes via `Compartment.reconfigure`.
+   - `ariaLabel` must update on i18n locale changes via `Compartment.reconfigure` (without destroying/re-mounting the `EditorView` and Undo stack).
    - Continue omitting `EditorView.cspNonce` and `indentWithTab`.
 
 ## Context
@@ -118,19 +118,19 @@ An isolated spike was built under `spikes/codemirror/` (`index.html`, `main.ts`,
 
 ### 1. Verification Matrix (Verified vs. `unverified`)
 
-| Check Item                                                                                     | Status           | Evidence / Notes                                                                                                                              |
-| ---------------------------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| License verification (all 17 packages `MIT`, zero non-MIT transitives, `devDependencies` only) | Verified         | `package-lock.json` + `node_modules/*/package.json` + `npm run license:check` (`201` packages)                                                |
-| Vite production bundle size & tree-shaken gzipped delta                                        | Verified         | Measured via `npm run build` vs `vite build --config spikes/codemirror/vite.config.ts` (see table below)                                      |
-| `Option A` CSS / `style-mod` `adoptedStyleSheets` inspection in installed packages             | Verified         | `@codemirror/view@6.44.2`, `@codemirror/lint@6.9.8`, `@codemirror/search@6.7.3` mount inside `this.root` without `setAttribute('style', ...)` |
-| Multi-step Undo/Redo, XML folding, `OpenTag`/`CloseTag` bracketMatching                        | Verified         | `spikes/codemirror/codemirror.test.ts` (`isolateHistory.of('full')`, `foldable`, `matchBrackets`)                                             |
-| `@xmlens/core` `Diagnostic.range.offset` → `@codemirror/lint` (incl. CJK, astral, EOF clamp)   | Verified         | `spikes/codemirror/codemirror.test.ts` (`mapDiagnosticsToLint`, `diagnosticToLintDiagnostic`)                                                 |
-| Undoable `formatXml` transaction (resolving `ADR-0012` `textarea.setRangeText` limitation)     | Verified         | `spikes/codemirror/codemirror.test.ts` (`createFormatTransactionSpec` with `isolateHistory.of('full')`)                                       |
-| `getXPathAtOffset` + composing/stale discard, `decodeXml` LF & `saveXml` CRLF/BOM round-trip   | Verified         | `spikes/codemirror/codemirror.test.ts` (`extractXPathLookupInput`, `shouldDiscardSpikeXPathResult`, `decodeXmlBytes`, `prepareXmlSaveBytes`)  |
-| `EditorView.contentAttributes` (`aria-label`), empty `EditorView.cspNonce`, no `indentWithTab` | Verified         | `spikes/codemirror/codemirror.test.ts` + `spikes/codemirror/bridge.ts`                                                                        |
-| Live browser `securitypolicyviolation` count (`style-src 'self'`) & `adoptedStyleSheets`       | **`unverified`** | Prepared in `spikes/codemirror/e2e.spec.ts`; no browser binaries installed in AI Studio container                                             |
-| Cross-browser Playwright + axe (`wcag22aa`) in Chromium / Firefox / WebKit                     | **`unverified`** | Spec written (`spikes/codemirror/e2e.spec.ts`); execution requires Windows manual check or GitHub Actions `e2e` job                           |
-| Real Japanese IME (`compositionstart`/`update`/`end`), Tab focus exit, screen readers          | **`unverified`** | Requires interactive Windows/macOS browser verification (checklist below)                                                                     |
+| Check Item                                                                                     | Status                    | Evidence / Notes                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| License verification (all 17 packages `MIT`, zero non-MIT transitives, `devDependencies` only) | Verified                  | `package-lock.json` + `node_modules/*/package.json` + `npm run license:check` (`201` packages)                                                                                                   |
+| Vite production bundle size & tree-shaken gzipped delta                                        | Verified                  | Measured via `npm run build` vs `vite build --config spikes/codemirror/vite.config.ts` (see table below)                                                                                         |
+| `Option A` CSS / `style-mod` `adoptedStyleSheets` inspection in installed packages             | Verified                  | `@codemirror/view@6.44.2`, `@codemirror/lint@6.9.8`, `@codemirror/search@6.7.3` mount inside `this.root` without `setAttribute('style', ...)`                                                    |
+| Multi-step Undo/Redo, XML folding, `OpenTag`/`CloseTag` bracketMatching                        | Verified                  | `spikes/codemirror/codemirror.test.ts` (`isolateHistory.of('full')`, `foldable`, `matchBrackets`)                                                                                                |
+| `@xmlens/core` `Diagnostic.range.offset` → `@codemirror/lint` (incl. CJK, astral, EOF clamp)   | Verified                  | `spikes/codemirror/codemirror.test.ts` (`mapDiagnosticsToLint`, `diagnosticToLintDiagnostic`)                                                                                                    |
+| Undoable `formatXml` transaction (resolving `ADR-0012` `textarea.setRangeText` limitation)     | Verified                  | `spikes/codemirror/codemirror.test.ts` (`createFormatTransactionSpec` with `isolateHistory.of('full')`)                                                                                          |
+| `getXPathAtOffset` + composing/stale discard, `decodeXml` LF & `saveXml` CRLF/BOM round-trip   | Verified                  | `spikes/codemirror/codemirror.test.ts` (`extractXPathLookupInput`, `shouldDiscardSpikeXPathResult`, `decodeXmlBytes`, `prepareXmlSaveBytes`)                                                     |
+| `EditorView.contentAttributes` (`aria-label`), empty `EditorView.cspNonce`, no `indentWithTab` | Verified                  | `spikes/codemirror/codemirror.test.ts` + `spikes/codemirror/bridge.ts`                                                                                                                           |
+| Live browser `securitypolicyviolation` count (`style-src 'self'`) & `adoptedStyleSheets`       | Verified (CI)             | GitHub Actions `e2e-spike` run `46068522284` (2026-11-28): `CSP violations: 0`, `<style>` `0`, `adoptedStyleSheets > 0` across Chromium, Firefox, and WebKit (`unverified` locally in AI Studio) |
+| Cross-browser Playwright + axe (`wcag22aa`) in Chromium / Firefox / WebKit                     | Verified (CI)             | GitHub Actions `e2e-spike` run `46068522284` (2026-11-28): `6/6` passed (`spikes/codemirror/e2e.spec.ts`), `0` axe violations, `0` console/page errors                                           |
+| Real Japanese IME (`compositionstart`/`update`/`end`), Tab focus exit, screen readers          | Verified (Windows manual) | Completed by maintainer on Windows (2026-11-28) covering Section B (`B-1`–`B-4`); macOS / Safari real hardware remains **`unverified`**                                                          |
 
 ### 2. Measured Vite Bundle Sizes (`vite@7.3.8`)
 
@@ -159,31 +159,33 @@ An isolated spike was built under `spikes/codemirror/` (`index.html`, `main.ts`,
 - **ShadowRoot & Accessibility:**
   - Setting `EditorView` `parent: shadowRoot` and `root: shadowRoot` causes `style-mod` to mount Constructable Stylesheets on `shadowRoot.adoptedStyleSheets`. CSS custom properties (`--bg-surface`, `--text-primary`, `--focus-ring`, `--cm-*`) cross the ShadowRoot boundary cleanly in CSS specs for Light, Dark, and High Contrast themes.
   - Excluding `indentWithTab` from `keymap` preserves `Tab` / `Shift+Tab` focus exit out of the editor. Accessible naming uses `EditorView.contentAttributes.of({ 'aria-label': ... })` via `Compartment.reconfigure` inside the ShadowRoot because `aria-labelledby` cannot cross a shadow boundary.
-- **Remaining Concerns & Recommendation:**
-  - Live browser confirmation in Chromium, Firefox, and WebKit (`adoptedStyleSheets` + `style-src 'self'`, search/lint panels inside `ShadowRoot`, and real Japanese IME composition) remains **unverified** inside AI Studio.
-  - **M1b Gate:** Wait for GitHub Actions `e2e-spike` (`chromium`, `firefox`, `webkit`) to pass green AND complete Manual Section B below before replacing `<textarea>` in `packages/app`. If any browser fails Option A, return to the maintainer without falling back to Option C.
+- **Remaining Concerns & M1b Readiness (Updated 2026-11-28):**
+  - GitHub Actions `e2e-spike` (`46068522284`, `6/6` across `chromium`, `firefox`, `webkit`) and Windows manual Section B (`B-1`–`B-4`) have passed, satisfying the preconditions to plan and start M1b.
+  - Production `packages/app` integration (`<textarea>` replacement, main-app `test:e2e`, and macOS/Safari real hardware verification) remains **`unverified`** until M1b is implemented. The `Escalation rule` remains in effect: if any browser fails Option A during M1b, stop and return to the maintainer without falling back to Option C.
 
 ## Verification Checklist (`spikes/codemirror/`)
 
 ### A. Replaced by GitHub Actions CI (`e2e-spike` job, `.github/workflows/ci.yml`)
 
-Manual verification of Section A is **no longer required** unless CI fails; the `e2e-spike` job (`npm run test:e2e:spike`, building with `spikes/codemirror/vite.config.ts` and running `vite preview` on `127.0.0.1:3100` via `webServer.cwd: '../..'` because Playwright defaults `webServer.cwd` to the config file directory `spikes/codemirror/`) automatically checks across `chromium`, `firefox`, and `webkit` (status as of 2026-11-27 run `45974182477`: `3/6` passed across all 3 browsers including CSP `0`, `<style>` `0`, `adoptedStyleSheets > 0`, and Format/Undo/Redo/`Tab`; sole axe `label` failure on `spikes/codemirror/main.ts`'s `hidden-file-input` fixed via `'aria-hidden': 'true'`):
+Manual verification of Section A is **no longer required** unless CI fails; the `e2e-spike` job (`npm run test:e2e:spike`, building with `spikes/codemirror/vite.config.ts` and running `vite preview` on `127.0.0.1:3100` via `webServer.cwd: '../..'` because Playwright defaults `webServer.cwd` to the config file directory `spikes/codemirror/`) checks across `chromium`, `firefox`, and `webkit`.
+
+- **2026-11-28 green run (`46068522284`):** All `6/6` tests (`2` specs × `3` browsers) passed following the `aria-hidden="true"` fix on `hidden-file-input`, confirming:
 
 1. Zero `securitypolicyviolation` events (captured from page start via `page.addInitScript`), zero `console.error`, and zero `pageerror` events under strict `style-src 'self'`.
 2. `#cm-host.shadowRoot` contains `0` `<style>` elements, `> 0` `adoptedStyleSheets`, and `.cm-content` `aria-label`.
 3. `AxeBuilder` (`wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `wcag22aa`) reports `0` violations.
 4. **Format** → **Undo** → **Redo** flow and `Tab` focus exit (without inserting `\t`).
 
-### B. Manual-Only Windows Verification Checklist (Required Before M1b)
+### B. Manual-Only Windows Verification Checklist (Completed 2026-11-28)
 
-To run locally on Windows if needed:
+Maintainer completed manual verification on Windows on 2026-11-28 covering all four items (`B-1` through `B-4`) below. Retain this checklist for M1b production regression verification (`npm run build && npm run preview`):
 
 ```bash
 npx vite build --config spikes/codemirror/vite.config.ts
 npx vite preview --config spikes/codemirror/vite.config.ts --host 127.0.0.1 --port 3100
 ```
 
-1. **Real Japanese IME composition & cancellation (Edge/Chrome & Firefox):** Focus the editor, enable Microsoft IME (Japanese), type `あいう` + convert + commit inside `<root><p></p></root>`, and cancel a conversion with `Escape`. Confirm no duplicated characters, status-bar `XPath` updates cleanly after commit without flickering mid-composition, and `CSP violations: 0`.
-2. **Keyboard-only `Tab` exit & Search panel (`Ctrl+F`):** Focus the editor, press `Tab` and `Shift+Tab`, and confirm focus exits the editor cleanly (no keyboard trap). Press `Ctrl+F` (or click **Search**), navigate search panel inputs/buttons with `Tab`, and press `Escape` to return focus to the editor while confirming `CSP violations: 0`.
-3. **Screen reader announcement (Windows Narrator or NVDA):** Focus the editor and confirm the screen reader announces `XML Input` / `XML 入力` and editable role; navigate to a diagnostic item and confirm location/message readout.
-4. **Themes & High Contrast / `prefers-reduced-motion`:** Switch **Light / Dark / High contrast** in the spike toolbar, inspect syntax colors, selection background, gutter, and `2px` focus ring readability; verify cursor blinking stops when Windows animation effects are reduced.
+1. **(`B-1`, Verified 2026-11-28) Real Japanese IME composition & cancellation:** Focus the editor, enable Microsoft IME (Japanese), type `あいう` + convert + commit inside `<root><p></p></root>`, and cancel a conversion with `Escape`. Confirm no duplicated characters, status-bar `XPath` updates cleanly after commit without flickering mid-composition, and `CSP violations: 0`.
+2. **(`B-2`, Verified 2026-11-28) Keyboard-only `Tab` exit & Search panel (`Ctrl+F`):** Focus the editor, press `Tab` and `Shift+Tab`, and confirm focus exits the editor cleanly (no keyboard trap). Press `Ctrl+F` (or click **Search**), navigate search panel inputs/buttons with `Tab`, and press `Escape` to return focus to the editor while confirming `CSP violations: 0`.
+3. **(`B-3`, Verified 2026-11-28) Screen reader announcement:** Focus the editor and confirm the screen reader announces `XML Input` / `XML 入力` and editable role; navigate to a diagnostic item and confirm location/message readout.
+4. **(`B-4`, Verified 2026-11-28) Themes & High Contrast / `prefers-reduced-motion`:** Switch **Light / Dark / High contrast** in the spike toolbar, inspect syntax colors, selection background, gutter, and `2px` focus ring readability; verify cursor blinking stops when Windows animation effects are reduced.

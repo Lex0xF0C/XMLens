@@ -7,6 +7,17 @@ This changelog separates **development changelog versions** (`DEV-NNNN`, monoton
 
 (none)
 
+## [DEV-0012] - 2026-11-28
+
+- **Sync:** direct
+- **Refs:** ADR-0005, ADR-0006, docs/adr/0005-codemirror-and-csp.md, docs/adr/0006-e2e-and-a11y-tooling.md, docs/feature-matrix.md, CHANGELOG.md
+
+### Changed
+
+- Updated `docs/adr/0005-codemirror-and-csp.md` to record completion of the M1b prerequisite gates: GitHub Actions `e2e-spike` run `46068522284` (`6/6` tests passed across Chromium, Firefox, and WebKit under strict `style-src 'self'` with `0` CSP/console/page/axe errors) in Section A, and the maintainer's Windows manual Section B (`B-1`–`B-4`) verification on 2026-11-28, while keeping the M1b production `<textarea>` replacement unstarted (pending M1b plan approval) and preserving the Option A escalation rule and M1b integration constraints.
+- Promoted `docs/adr/0006-e2e-and-a11y-tooling.md` `Status` to `Accepted (2026-11-28)` following the green `e2e-spike` CI run `46068522284`, retaining all constraints (`devDependencies` only, unmodified, never bundled into `dist/`, `MPL-2.0` exceptions limited to `@axe-core/playwright` and `axe-core`, browser binaries excluded from git and `dist/`) and noting main-app `npm run test:e2e` awaits M1b.
+- Updated `docs/feature-matrix.md` §1 (`Light / Dark / High-contrast themes & WCAG 2.2 AA landmarks`) and §2 (`Text editing mode ... CodeMirror 6`) notes to reflect `ADR-0006` `Accepted`, `e2e-spike` run `46068522284`, and Windows manual Section B completion while keeping production `<textarea>` replacement pending M1b. (`packages/app`, `spikes/`, `package.json`, `locales/`, `docs/adr/0015-ui-framework.md`, and `docs/adr/0016-uri-resolution-spike-r1.md` remain unchanged.)
+
 ## [DEV-0011] - 2026-11-28
 
 - **Sync:** direct
